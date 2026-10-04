@@ -1,0 +1,30 @@
+{
+  "name": "beauty-tn-batista",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "demo": "vite build --mode demo --outDir dist-demo && vite preview --outDir dist-demo --port 5181 --strictPort --host",
+    "demo:dev": "vite --mode demo --port 5181 --strictPort",
+    "test": "node scripts/testar-unidades.mjs",
+    "test:integracao": "node scripts/testar-integracao.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.57.0",
+    "@tailwindcss/vite": "^4.1.14",
+    "lucide-react": "^0.468.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "tailwindcss": "^4.1.14"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.13",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.4",
+    "typescript": "~5.8.3",
+    "vite": "^7.1.7"
+  }
+}
