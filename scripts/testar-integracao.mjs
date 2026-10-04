@@ -1,5 +1,8 @@
 // Teste de integração contra o banco de desenvolvimento, com as contas de .env.test.local.
-// Cobre os critérios de aceite que dependem do servidor (CA02–CA09, CA11) e as regras RN01–RN09.
+// Cobre os critérios de aceite que dependem do servidor (CA02–CA09, CA11), as regras RN01–RN09 e a operação da agenda
+// (migração 011: conflito da cliente, versão, horário passado, preparação, duração por profissional, recursos,
+// correção de status, comunicações e lista de espera), inclusive gravações simultâneas reais.
+// Requer a migração 011 aplicada. Nenhuma mensagem real é enviada: comunicações são apenas registros.
 // Os dados criados ficam identificados com "Teste" e as reservas ativas são canceladas ao final.
 import { createClient } from '@supabase/supabase-js'
 import { randomUUID } from 'node:crypto'
@@ -88,12 +91,18 @@ const D = base.toISOString().slice(0, 10)
 console.log(`\nData de teste: ${D}\n`)
 
 const criados = []
-const criar = async (quem, { hora, servico = serv60, profissional = profA, id = randomUUID(), data = D }) => {
-  const resposta = await quem.rpc('criar_agendamento', { p_id: id, p_cliente_id: cliente.id, p_servico_id: servico.id, p_profissional_id: profissional.id, p_data: data, p_hora: hora })
+const novoAgendamento = ({ id, cli = cliente, servico = serv60, profissional = profA, data = D, hora, justificativa = null, espera = null }) => ({
+  p_id: id, p_cliente_id: cli.id, p_servico_id: servico.id, p_profissional_id: profissional.id, p_data: data, p_hora: hora,
+  p_observacao: null, p_encaixe: false, p_justificativa_conflito: justificativa, p_lista_espera_id: espera,
+})
+const versao = async id => exigir(await admin.from('agendamentos').select('versao').eq('id', id).single(), 'versão').versao
+const criar = async (quem, { hora, servico = serv60, profissional = profA, id = randomUUID(), data = D, cli = cliente, justificativa = null, espera = null }) => {
+  const resposta = await quem.rpc('criar_agendamento', novoAgendamento({ id, cli, servico, profissional, data, hora, justificativa, espera }))
   if (!resposta.error) criados.push(id)
   return { id, error: resposta.error }
 }
 const agendaDoDia = async (quem, profissionalId = null) => exigir(await quem.rpc('listar_agenda', { p_data_inicio: D, p_data_fim: D, p_profissional_id: profissionalId }), 'listar agenda')
+const agendaDoDiaEm = async (quem, data) => exigir(await quem.rpc('listar_agenda', { p_data_inicio: data, p_data_fim: data }), 'listar agenda')
 const bloqueiosCriados = []
 const datasPublicas = []
 const hojeClinica = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date())
@@ -143,7 +152,7 @@ try {
   // ---------- CA11: idempotência ----------
   const idRepetido = randomUUID()
   const primeira = await criar(secretaria, { hora: '13:00', id: idRepetido })
-  const segunda = await secretaria.rpc('criar_agendamento', { p_id: idRepetido, p_cliente_id: cliente.id, p_servico_id: serv60.id, p_profissional_id: profA.id, p_data: D, p_hora: '13:00' })
+  const segunda = await secretaria.rpc('criar_agendamento', novoAgendamento({ id: idRepetido, hora: '13:00' }))
   const copias = (await agendaDoDia(admin, profA.id)).filter(i => i.hora_inicio === '13:00' && i.status !== 'cancelado').length
   verificar('CA11: reenvio do mesmo pedido não duplica a reserva', !primeira.error && !segunda.error && copias === 1, `${primeira.error?.message ?? ''} ${segunda.error?.message ?? ''} cópias=${copias}`)
 
@@ -157,12 +166,12 @@ try {
   verificar('Inativar profissional com reservas futuras exige revisão antes', inativar.error?.message?.includes('Reagende ou cancele'), inativar.error?.message)
 
   // ---------- CA06: reagendamento ----------
-  const ocupado = await secretaria.rpc('reagendar_agendamento', { p_id: r09.id, p_data: D, p_hora: '10:00', p_profissional_id: profA.id, p_motivo: 'Teste conflito' })
+  const ocupado = await secretaria.rpc('reagendar_agendamento', { p_id: r09.id, p_data: D, p_hora: '10:00', p_profissional_id: profA.id, p_motivo: 'Teste conflito', p_duracao_minutos: null, p_versao: await versao(r09.id), p_justificativa_conflito: null })
   const r09Depois = (await agendaDoDia(admin, profA.id)).find(i => i.id === r09.id)
   verificar('CA06: reagendar para horário ocupado falha e mantém o horário original', ocupado.error && r09Depois.hora_inicio === '09:00', ocupado.error?.message)
-  const semMotivo = await secretaria.rpc('reagendar_agendamento', { p_id: r09.id, p_data: D, p_hora: '16:00', p_profissional_id: profA.id, p_motivo: '' })
+  const semMotivo = await secretaria.rpc('reagendar_agendamento', { p_id: r09.id, p_data: D, p_hora: '16:00', p_profissional_id: profA.id, p_motivo: '', p_duracao_minutos: null, p_versao: await versao(r09.id), p_justificativa_conflito: null })
   verificar('RN06: reagendamento exige motivo', semMotivo.error?.message?.includes('motivo'), semMotivo.error?.message)
-  const reag = await secretaria.rpc('reagendar_agendamento', { p_id: r09.id, p_data: D, p_hora: '16:00', p_profissional_id: profA.id, p_motivo: 'Cliente pediu outro horário' })
+  const reag = await secretaria.rpc('reagendar_agendamento', { p_id: r09.id, p_data: D, p_hora: '16:00', p_profissional_id: profA.id, p_motivo: 'Cliente pediu outro horário', p_duracao_minutos: null, p_versao: await versao(r09.id), p_justificativa_conflito: null })
   verificar('CA06: reagendamento válido é gravado', !reag.error, reag.error?.message)
   const historico = exigir(await admin.rpc('historico_do_agendamento', { p_id: r09.id }), 'histórico')
   const regReag = historico.find(h => h.acao === 'reagendado')
@@ -170,13 +179,13 @@ try {
     regReag?.valores_anteriores?.hora_inicio === '09:00' && regReag?.valores_novos?.hora_inicio === '16:00' && regReag?.motivo === 'Cliente pediu outro horário' && regReag?.usuario_nome === 'Secretaria Teste')
   const novo09 = await criar(admin, { hora: '09:00' })
   verificar('CA06: horário anterior foi liberado após o reagendamento', !novo09.error, novo09.error?.message)
-  const duracaoSecretaria = await secretaria.rpc('reagendar_agendamento', { p_id: r09.id, p_data: D, p_hora: '16:00', p_profissional_id: profA.id, p_motivo: 'Teste duração', p_duracao_minutos: 90 })
+  const duracaoSecretaria = await secretaria.rpc('reagendar_agendamento', { p_id: r09.id, p_data: D, p_hora: '16:00', p_profissional_id: profA.id, p_motivo: 'Teste duração', p_duracao_minutos: 90, p_versao: await versao(r09.id), p_justificativa_conflito: null })
   verificar('Ajuste de duração é restrito à administração', duracaoSecretaria.error?.message?.includes('administração'), duracaoSecretaria.error?.message)
 
   // ---------- CA07: cancelamento ----------
-  const cancSemMotivo = await secretaria.rpc('cancelar_agendamento', { p_id: r10.id, p_motivo: ' ' })
+  const cancSemMotivo = await secretaria.rpc('cancelar_agendamento', { p_id: r10.id, p_motivo: ' ', p_versao: await versao(r10.id) })
   verificar('RN07: cancelamento exige motivo', cancSemMotivo.error?.message?.includes('motivo'), cancSemMotivo.error?.message)
-  const canc = await secretaria.rpc('cancelar_agendamento', { p_id: r10.id, p_motivo: 'Cliente desistiu' })
+  const canc = await secretaria.rpc('cancelar_agendamento', { p_id: r10.id, p_motivo: 'Cliente desistiu', p_versao: await versao(r10.id) })
   const registro = exigir(await admin.from('agendamentos').select('status, cancelado_por, cancelado_em, motivo_cancelamento').eq('id', r10.id).single(), 'reserva cancelada')
   verificar('CA07: cancelamento preserva o registro com responsável, momento e motivo',
     !canc.error && registro.status === 'cancelado' && registro.cancelado_por === contaSecretaria() && registro.cancelado_em && registro.motivo_cancelamento === 'Cliente desistiu', canc.error?.message)
@@ -187,13 +196,13 @@ try {
   const passos = ['confirmado', 'chegou', 'em_atendimento', 'concluido']
   let andamentoOk = true
   for (const status of passos) {
-    const { error } = await secretaria.rpc('alterar_status_agendamento', { p_id: novo09.id, p_status: status })
+    const { error } = await secretaria.rpc('alterar_status_agendamento', { p_id: novo09.id, p_status: status, p_versao: await versao(novo09.id) })
     if (error) { andamentoOk = false; console.log(`   ${status}: ${error.message}`) }
   }
   verificar('RF07: confirmar, chegada, início e conclusão em sequência', andamentoOk)
-  const voltar = await secretaria.rpc('alterar_status_agendamento', { p_id: novo09.id, p_status: 'agendado' })
+  const voltar = await secretaria.rpc('alterar_status_agendamento', { p_id: novo09.id, p_status: 'agendado', p_versao: await versao(novo09.id) })
   verificar('Concluído não volta para outro estado', voltar.error?.code === 'P0001', voltar.error?.message)
-  const faltaAntes = await secretaria.rpc('alterar_status_agendamento', { p_id: novo10.id, p_status: 'faltou' })
+  const faltaAntes = await secretaria.rpc('alterar_status_agendamento', { p_id: novo10.id, p_status: 'faltou', p_versao: await versao(novo10.id) })
   verificar('Falta só pode ser registrada após o horário previsto', faltaAntes.error?.message?.includes('após o horário'), faltaAntes.error?.message)
 
   // ---------- CA08 ----------
@@ -213,8 +222,8 @@ try {
   verificar('CA09: outro profissional vê somente a própria agenda', prof2Agenda.every(i => i.profissional_id === profB.id))
   const profCria = await criar(prof1, { hora: '17:00' })
   verificar('Profissional não cria agendamentos (somente consulta)', profCria.error?.code === '42501', profCria.error?.message)
-  const profStatus = await prof1.rpc('alterar_status_agendamento', { p_id: novo10.id, p_status: 'confirmado' })
-  verificar('Profissional não altera status (pendente de definição no PRD)', profStatus.error?.code === '42501', profStatus.error?.message)
+  const profStatus = await prof1.rpc('alterar_status_agendamento', { p_id: novo10.id, p_status: 'confirmado', p_versao: await versao(novo10.id) })
+  verificar('Profissional não altera status', profStatus.error?.code === '42501', profStatus.error?.message)
   const secJornada = await secretaria.rpc('salvar_disponibilidade', { p_profissional_id: profA.id, p_faixas: jornada })
   verificar('Secretaria não altera jornadas', secJornada.error?.code === '42501', secJornada.error?.message)
   const secProf = await secretaria.from('profissionais').update({ nome: 'Invasão' }).eq('id', profA.id).select('id')
@@ -282,8 +291,8 @@ try {
   verificar('Profissional não altera a própria disponibilidade', profJornada.error?.code === '42501', profJornada.error?.message)
   const profCliente = await prof1.rpc('agendamentos_do_cliente', { p_cliente_id: cliente.id })
   verificar('Profissional não acessa o histórico geral do cliente', profCliente.error?.code === '42501', profCliente.error?.message)
-  const profCancela = await prof1.rpc('cancelar_agendamento', { p_id: novo10.id, p_motivo: 'Tentativa (teste)' })
-  const profReag = await prof1.rpc('reagendar_agendamento', { p_id: novo10.id, p_data: D, p_hora: '13:00', p_profissional_id: profA.id, p_motivo: 'Tentativa (teste)' })
+  const profCancela = await prof1.rpc('cancelar_agendamento', { p_id: novo10.id, p_motivo: 'Tentativa (teste)', p_versao: await versao(novo10.id) })
+  const profReag = await prof1.rpc('reagendar_agendamento', { p_id: novo10.id, p_data: D, p_hora: '13:00', p_profissional_id: profA.id, p_motivo: 'Tentativa (teste)', p_duracao_minutos: null, p_versao: await versao(novo10.id), p_justificativa_conflito: null })
   verificar('Profissional não cancela nem remarca', profCancela.error?.code === '42501' && profReag.error?.code === '42501')
   const profAgendaB = await prof1.rpc('listar_agenda', { p_data_inicio: D, p_data_fim: D, p_profissional_id: profB.id })
   verificar('Profissional que troca o identificador na chamada continua vendo só a própria agenda', !profAgendaB.error && profAgendaB.data.every(i => i.profissional_id === profA.id))
@@ -387,22 +396,22 @@ try {
   // Horário ocupado depois da consulta inicial: a nova consulta (feita antes de abrir o WhatsApp) não o oferece mais.
   const consultaInicial = (await horarios(serv60)).map(h => h.horario)
   const ocupadoDepois = randomUUID()
-  exigir(await secretaria.rpc('criar_agendamento', { p_id: ocupadoDepois, p_cliente_id: cliente.id, p_servico_id: serv60.id, p_profissional_id: profC.id, p_data: Dp, p_hora: '14:00' }), 'reserva 14h')
+  exigir(await secretaria.rpc('criar_agendamento', novoAgendamento({ id: ocupadoDepois, profissional: profC, data: Dp, hora: '14:00' })), 'reserva 14h')
   const novaConsulta = (await horarios(serv60)).map(h => h.horario)
   verificar('Horário ocupado após a consulta inicial deixa de ser oferecido na nova consulta', consultaInicial.includes('14:00') && !novaConsulta.includes('14:00'))
-  exigir(await secretaria.rpc('cancelar_agendamento', { p_id: ocupadoDepois, p_motivo: 'Fim do teste de reconsulta' }), 'cancelar 14h')
+  exigir(await secretaria.rpc('cancelar_agendamento', { p_id: ocupadoDepois, p_motivo: 'Fim do teste de reconsulta', p_versao: await versao(ocupadoDepois) }), 'cancelar 14h')
 
   // Reserva pendente e confirmada ocupam; cancelamento libera.
   const reservaC = randomUUID()
-  exigir(await admin.rpc('criar_agendamento', { p_id: reservaC, p_cliente_id: cliente.id, p_servico_id: serv60.id, p_profissional_id: profC.id, p_data: Dp, p_hora: '09:00' }), 'reserva C')
+  exigir(await admin.rpc('criar_agendamento', novoAgendamento({ id: reservaC, profissional: profC, data: Dp, hora: '09:00' })), 'reserva C')
   const comPendente = (await horarios(serv60)).map(h => h.horario)
-  exigir(await admin.rpc('alterar_status_agendamento', { p_id: reservaC, p_status: 'confirmado' }), 'confirmar C')
+  exigir(await admin.rpc('alterar_status_agendamento', { p_id: reservaC, p_status: 'confirmado', p_versao: await versao(reservaC) }), 'confirmar C')
   const comConfirmada = (await horarios(serv60)).map(h => h.horario)
   verificar('Reserva pendente (agendado) ocupa o horário', !comPendente.includes('09:00'))
   verificar('Reserva confirmada ocupa o horário', !comConfirmada.includes('09:00'))
   const livres30 = (await horarios(serv30)).map(h => h.horario)
   verificar('Serviço de 30 min não se sobrepõe à reserva das 09:00', !livres30.some(h => h >= '09:00' && h < '10:00'), livres30.join())
-  exigir(await admin.rpc('cancelar_agendamento', { p_id: reservaC, p_motivo: 'Teste de liberação' }), 'cancelar C')
+  exigir(await admin.rpc('cancelar_agendamento', { p_id: reservaC, p_motivo: 'Teste de liberação', p_versao: await versao(reservaC) }), 'cancelar C')
   verificar('Cancelamento libera o horário na consulta pública', (await horarios(serv60)).map(h => h.horario).includes('09:00'))
 
   // Visitante não lê dados privados nem grava.
@@ -415,21 +424,197 @@ try {
   ])
   verificar('Visitante não consulta clientes, agendamentos, bloqueios, perfis, histórico, auditoria nem configurações', leiturasVisitante.every(r => Boolean(r.error) || (Array.isArray(r.data) && r.data.length === 0)))
   const gravacoes = await Promise.all([
-    anonimo.rpc('criar_agendamento', { p_id: randomUUID(), p_cliente_id: cliente.id, p_servico_id: serv60.id, p_profissional_id: profC.id, p_data: Dp, p_hora: '10:00' }),
+    anonimo.rpc('criar_agendamento', novoAgendamento({ id: randomUUID(), profissional: profC, data: Dp, hora: '10:00' })),
     anonimo.from('clientes').insert({ nome: 'Visitante', telefone: '(11) 90000-0000' }),
     anonimo.rpc('criar_bloqueio', { p_profissional_id: profC.id, p_data_inicio: Dp, p_data_fim: Dp, p_hora_inicio: '10:00', p_hora_fim: '11:00', p_motivo: 'Visitante', p_dia_inteiro: false }),
     anonimo.from('configuracao_clinica').update({ horizonte_publico_dias: 90 }).eq('id', true),
   ])
   verificar('Visitante não cria reservas nem altera o sistema', gravacoes.every(r => Boolean(r.error)))
+  // ================= Operação da agenda (migração 011) =================
+  const cliente2 = await obterOuCriar('clientes', { nome: 'Cliente Teste Integração 2' }, { nome: 'Cliente Teste Integração 2', telefone: '(11) 90000-0002' })
+  const cliente3 = await obterOuCriar('clientes', { nome: 'Cliente Teste Integração 3' }, { nome: 'Cliente Teste Integração 3', telefone: '(11) 90000-0003' })
+  const D2 = somarDiasTexto(D, 1)
+
+  // Assinaturas antigas (sem as novas validações) não são chamáveis.
+  const antiga = await secretaria.rpc('criar_agendamento', { p_id: randomUUID(), p_cliente_id: cliente.id, p_servico_id: serv60.id, p_profissional_id: profA.id, p_data: D2, p_hora: '08:00' })
+  const antigaStatus = await secretaria.rpc('alterar_status_agendamento', { p_id: novo10.id, p_status: 'confirmado' })
+  verificar('Assinaturas antigas de criação e status não são chamáveis', Boolean(antiga.error) && Boolean(antigaStatus.error), `${antiga.error?.message ?? 'aceita'} / ${antigaStatus.error?.message ?? 'aceita'}`)
+
+  // Conflito da cliente com profissionais diferentes, inclusive em gravações simultâneas reais.
+  const base8 = await criar(secretaria, { hora: '08:00', data: D2, cli: cliente2 })
+  const conflitoCli = await criar(secretaria, { hora: '08:30', data: D2, cli: cliente2, profissional: profB })
+  verificar('Mesma cliente com outro profissional no mesmo período é recusada', conflitoCli.error?.hint === 'conflito_cliente' && /Teste Profissional A/.test(conflitoCli.error.message), conflitoCli.error?.message)
+  const secJust = await criar(secretaria, { hora: '08:30', data: D2, cli: cliente2, profissional: profB, justificativa: 'Tentativa de contornar' })
+  verificar('Secretaria não contorna o conflito enviando justificativa pela API', secJust.error?.hint === 'conflito_cliente', secJust.error?.message)
+  const admExc = await criar(admin, { hora: '08:30', data: D2, cli: cliente2, profissional: profB, justificativa: 'Atendimento em dupla (teste)' })
+  const histExc = admExc.error ? [] : exigir(await admin.rpc('historico_do_agendamento', { p_id: admExc.id }), 'histórico exceção')
+  verificar('Administração autoriza a exceção com justificativa registrada no histórico', !admExc.error && histExc.some(h => h.motivo?.includes('Atendimento em dupla')), admExc.error?.message)
+  const simultaneasCli = await Promise.all([
+    criar(secretaria, { hora: '13:00', data: D2, cli: cliente3, profissional: profA }),
+    criar(admin, { hora: '13:00', data: D2, cli: cliente3, profissional: profB }),
+  ])
+  verificar(`Gravações simultâneas da mesma cliente com profissionais diferentes resultam em 1 reserva (obtidas: ${simultaneasCli.filter(r => !r.error).length})`, simultaneasCli.filter(r => !r.error).length === 1)
+
+  // Horário passado pela API.
+  const ontem = somarDiasTexto(hojeClinica(), -1)
+  const passadoCria = await criar(secretaria, { hora: '09:00', data: ontem, cli: cliente3 })
+  const passadoReag = await secretaria.rpc('reagendar_agendamento', { p_id: base8.id, p_data: ontem, p_hora: '09:00', p_profissional_id: profA.id, p_motivo: 'Teste passado', p_duracao_minutos: null, p_versao: await versao(base8.id), p_justificativa_conflito: null })
+  verificar('Criação e reagendamento no passado são recusados pela API', /já passou/.test(passadoCria.error?.message ?? '') && /já passou/.test(passadoReag.error?.message ?? ''), `${passadoCria.error?.message} / ${passadoReag.error?.message}`)
+
+  // Controle de versão entre duas sessões.
+  const vAberta = await versao(base8.id)
+  const sessao1 = await secretaria.rpc('editar_agendamento', { p_id: base8.id, p_observacao: 'Sessão 1 (teste)', p_encaixe: false, p_versao: vAberta })
+  const sessao2 = await admin.rpc('editar_agendamento', { p_id: base8.id, p_observacao: 'Sessão 2 com dados antigos', p_encaixe: false, p_versao: vAberta })
+  const obsFinal = exigir(await admin.from('agendamentos').select('observacao').eq('id', base8.id).single(), 'observação').observacao
+  verificar('Gravação com versão antiga é recusada e a alteração recente é preservada', !sessao1.error && sessao2.error?.hint === 'versao_desatualizada' && obsFinal === 'Sessão 1 (teste)', sessao2.error?.message)
+
+  // Conclusão antecipada não libera o período.
+  const ocupadoAposConclusao = await criar(secretaria, { hora: '09:30', servico: serv30, cli: cliente3 })
+  verificar('Período de atendimento concluído antes do fim continua ocupado', /período/.test(ocupadoAposConclusao.error?.message ?? ''), ocupadoAposConclusao.error?.message)
+
+  // Correção de status.
+  const secCorrige = await secretaria.rpc('corrigir_status_agendamento', { p_id: novo09.id, p_status: 'em_atendimento', p_justificativa: 'Teste', p_versao: await versao(novo09.id) })
+  const profCorrige = await prof1.rpc('corrigir_status_agendamento', { p_id: novo09.id, p_status: 'em_atendimento', p_justificativa: 'Teste', p_versao: await versao(novo09.id) })
+  verificar('Secretaria e profissional não corrigem status', secCorrige.error?.code === '42501' && profCorrige.error?.code === '42501')
+  const corrige = await admin.rpc('corrigir_status_agendamento', { p_id: novo09.id, p_status: 'em_atendimento', p_justificativa: 'Concluído por engano (teste)', p_versao: await versao(novo09.id) })
+  const histCorr = exigir(await admin.rpc('historico_do_agendamento', { p_id: novo09.id }), 'histórico').find(h => h.acao === 'status_corrigido')
+  verificar('Administração corrige status com justificativa e histórico', !corrige.error && histCorr?.valores_anteriores?.status === 'concluido' && histCorr?.valores_novos?.status === 'em_atendimento' && histCorr?.usuario_nome === 'Admin Teste', corrige.error?.message)
+  exigir(await admin.rpc('corrigir_status_agendamento', { p_id: novo09.id, p_status: 'concluido', p_justificativa: 'Retorna ao concluído (teste)', p_versao: await versao(novo09.id) }), 'restaurar concluído')
+  const voltaOcupar = await admin.rpc('corrigir_status_agendamento', { p_id: r10.id, p_status: 'agendado', p_justificativa: 'Cancelado por engano (teste)', p_versao: await versao(r10.id) })
+  verificar('Correção que voltaria a ocupar vaga já comprometida é recusada', /período/.test(voltaOcupar.error?.message ?? ''), voltaOcupar.error?.message)
+
+  // Preparação e duração por profissional.
+  const servPrep = await obterOuCriar('servicos', { nome: 'Teste Serviço com preparação' }, { nome: 'Teste Serviço com preparação', duracao_minutos: 60, preparacao_minutos: 15 })
+  exigir(await admin.from('servicos').update({ duracao_minutos: 60, preparacao_minutos: 15, ativo: true }).eq('id', servPrep.id), 'serviço com preparação')
+  const habPrep = exigir(await admin.from('profissional_servicos').select('profissional_id').eq('servico_id', servPrep.id), 'habilitação preparação')
+  for (const p of [profA, profB]) if (!habPrep.some(h => h.profissional_id === p.id)) exigir(await admin.from('profissional_servicos').insert({ profissional_id: p.id, servico_id: servPrep.id }), 'habilitar preparação')
+  const comPrep = await criar(secretaria, { hora: '15:00', data: D2, servico: servPrep, cli: cliente3, profissional: profB })
+  const naPrep = await criar(secretaria, { hora: '16:00', data: D2, cli: cliente2, profissional: profB })
+  verificar('A preparação ocupa a agenda do profissional após o atendimento', !comPrep.error && /preparação/.test(naPrep.error?.message ?? ''), comPrep.error?.message ?? naPrep.error?.message)
+  const secDuracao = await secretaria.from('profissional_servicos').update({ duracao_minutos: 90 }).eq('profissional_id', profB.id).eq('servico_id', serv60.id).select('servico_id')
+  verificar('Secretaria não altera a duração por profissional', Boolean(secDuracao.error) || secDuracao.data.length === 0)
+  exigir(await admin.from('profissional_servicos').update({ duracao_minutos: 90 }).eq('profissional_id', profB.id).eq('servico_id', serv60.id), 'duração específica')
+  const dur90 = await criar(secretaria, { hora: '09:00', data: somarDiasTexto(D, 2), profissional: profB })
+  const durGravada = dur90.error ? null : exigir(await admin.from('agendamentos').select('duracao_minutos, preparacao_minutos').eq('id', dur90.id).single(), 'duração gravada')
+  exigir(await admin.from('profissional_servicos').update({ duracao_minutos: null }).eq('profissional_id', profB.id).eq('servico_id', serv60.id), 'restaurar duração')
+  const durDepois = dur90.error ? null : exigir(await admin.from('agendamentos').select('duracao_minutos').eq('id', dur90.id).single(), 'duração depois')
+  verificar('Reserva usa e preserva a duração específica do profissional', durGravada?.duracao_minutos === 90 && durDepois?.duracao_minutos === 90, dur90.error?.message)
+
+  // Recursos compartilhados com gravações simultâneas reais.
+  const sala = await obterOuCriar('recursos', { nome: 'Teste Sala Integração' }, { nome: 'Teste Sala Integração', capacidade: 1 })
+  exigir(await admin.from('recursos').update({ ativo: true, capacidade: 1 }).eq('id', sala.id), 'ativar sala')
+  // O vínculo é desfeito na limpeza; reservas anteriores ao vínculo não reservam a sala (recursos gravados na criação).
+  const vinculoSala = exigir(await admin.from('servico_recursos').select('servico_id').eq('servico_id', serv60.id).eq('recurso_id', sala.id), 'vínculo sala')
+  if (!vinculoSala.length) exigir(await admin.from('servico_recursos').insert({ servico_id: serv60.id, recurso_id: sala.id }), 'vincular sala')
+  const D3 = somarDiasTexto(D, 3)
+  const simultaneasSala = await Promise.all([
+    criar(secretaria, { hora: '10:00', data: D3, cli: cliente2, profissional: profA }),
+    criar(admin, { hora: '10:00', data: D3, cli: cliente3, profissional: profB }),
+  ])
+  verificar(`Recurso de uso exclusivo em gravações simultâneas resulta em 1 reserva (obtidas: ${simultaneasSala.filter(r => !r.error).length})`, simultaneasSala.filter(r => !r.error).length === 1)
+  const desativarSala = await admin.from('recursos').update({ ativo: false }).eq('id', sala.id).select('id')
+  verificar('Recurso com reservas futuras não é desativado sem tratar as reservas', /desativar/.test(desativarSala.error?.message ?? ''), desativarSala.error?.message)
+  const secSala = await secretaria.from('recursos').insert({ nome: 'Sala indevida (teste)' }).select('id')
+  verificar('Secretaria não cadastra recursos', Boolean(secSala.error))
+
+  // Comunicações (somente registro; nenhuma mensagem real é enviada).
+  const semRegistro = exigir(await secretaria.rpc('listar_comunicacoes', { p_agendamento_id: base8.id }), 'comunicações')
+  const idMsg = randomUUID()
+  const reg1 = await secretaria.rpc('registrar_comunicacao', { p_id: idMsg, p_agendamento_id: base8.id, p_tipo: 'confirmacao' })
+  const reg2 = await secretaria.rpc('registrar_comunicacao', { p_id: idMsg, p_agendamento_id: base8.id, p_tipo: 'confirmacao' })
+  const comRegistro = exigir(await secretaria.rpc('listar_comunicacoes', { p_agendamento_id: base8.id }), 'comunicações')
+  const statusBase8 = (await agendaDoDiaEm(admin, D2)).find(i => i.id === base8.id)
+  verificar('Envio só existe quando registrado, sem duplicar, e não confirma presença', semRegistro.length === 0 && !reg1.error && !reg2.error && comRegistro.length === 1 && statusBase8?.status === 'agendado' && statusBase8?.ultima_comunicacao_tipo === 'confirmacao')
+  const profMsg = await prof1.rpc('registrar_comunicacao', { p_id: randomUUID(), p_agendamento_id: base8.id, p_tipo: 'lembrete' })
+  verificar('Profissional não registra comunicações', profMsg.error?.code === '42501')
+  exigir(await secretaria.rpc('reagendar_agendamento', { p_id: base8.id, p_data: D2, p_hora: '10:00', p_profissional_id: profA.id, p_motivo: 'Teste de comunicação', p_duracao_minutos: null, p_versao: await versao(base8.id), p_justificativa_conflito: null }), 'reagendar base8')
+  verificar('Após reagendar, a agenda indica que é preciso avisar a cliente de novo', (await agendaDoDiaEm(admin, D2)).find(i => i.id === base8.id)?.comunicacao_desatualizada === true)
+
+  // Lista de espera.
+  const existentes = exigir(await admin.from('lista_espera').select('id, versao').eq('cliente_id', cliente3.id).in('status', ['aguardando', 'contatado']), 'entradas antigas')
+  for (const e of existentes) await admin.rpc('atualizar_lista_espera', { p_id: e.id, p_status: 'desistiu', p_observacao: 'Limpeza de execução anterior', p_versao: e.versao })
+  const idEspera = randomUUID()
+  const espera = await secretaria.rpc('criar_lista_espera', { p_id: idEspera, p_cliente_id: cliente3.id, p_servico_id: serv60.id, p_profissional_id: null, p_data_inicio: hojeClinica(), p_data_fim: somarDiasTexto(D, 30), p_hora_inicio: null, p_hora_fim: null, p_observacao: 'Teste de integração' })
+  const duplicada = await secretaria.rpc('criar_lista_espera', { p_id: randomUUID(), p_cliente_id: cliente3.id, p_servico_id: serv60.id, p_profissional_id: null, p_data_inicio: hojeClinica(), p_data_fim: somarDiasTexto(D, 30), p_hora_inicio: null, p_hora_fim: null, p_observacao: null })
+  verificar('Lista de espera aceita a entrada e recusa duplicidade acidental', !espera.error && /já está na lista/.test(duplicada.error?.message ?? ''), espera.error?.message ?? duplicada.error?.message)
+  const vagaLib = await criar(secretaria, { hora: '16:00', data: somarDiasTexto(D, 4), cli: cliente2 })
+  const vagaReg = exigir(await admin.from('agendamentos').select('inicio, ocupado_ate').eq('id', vagaLib.id).single(), 'vaga')
+  exigir(await secretaria.rpc('cancelar_agendamento', { p_id: vagaLib.id, p_motivo: 'Libera vaga (teste)', p_versao: await versao(vagaLib.id) }), 'cancelar vaga')
+  const candidatos = exigir(await secretaria.rpc('candidatos_lista_espera', { p_profissional_id: profA.id, p_inicio: vagaReg.inicio, p_ocupado_ate: vagaReg.ocupado_ate }), 'candidatos')
+  verificar('Vaga liberada apresenta candidatos compatíveis da lista de espera', candidatos.some(c => c.id === idEspera))
+  const viaLista = await criar(secretaria, { hora: '16:00', data: somarDiasTexto(D, 4), cli: cliente3, espera: idEspera })
+  const entradaDepois = exigir(await admin.from('lista_espera').select('status, agendamento_id').eq('id', idEspera).single(), 'entrada')
+  const deNovo = await criar(secretaria, { hora: '09:00', data: somarDiasTexto(D, 5), cli: cliente3, espera: idEspera })
+  verificar('Agendar pela lista cria uma única reserva e só então marca "agendado"', !viaLista.error && entradaDepois.status === 'agendado' && entradaDepois.agendamento_id === viaLista.id && /encerrada/.test(deNovo.error?.message ?? ''), viaLista.error?.message)
+  const profEspera = await prof1.rpc('listar_lista_espera', {})
+  verificar('Profissional não acessa a lista de espera', profEspera.error?.code === '42501')
+
+  // Consulta pública e sinal de sincronização.
+  const durPub = exigir(await anonimo.rpc('duracao_publica', { p_servico_id: servPrep.id, p_profissional_id: profB.id }), 'duração pública')
+  verificar('Visitante recebe a duração do atendimento sem a preparação', durPub === 60, String(durPub))
+  const anonNovas = await Promise.all([anonimo.from('recursos').select('id'), anonimo.from('lista_espera').select('id'), anonimo.from('comunicacoes').select('id'), anonimo.from('agenda_revisoes').select('profissional_id'), anonimo.rpc('horarios_livres', { p_servico_id: serv60.id, p_profissional_id: profA.id, p_data: D, p_ignorar_id: null, p_duracao_minutos: null })])
+  verificar('Visitante não acessa recursos, lista de espera, comunicações, sinal da agenda nem horários internos', anonNovas.every(r => Boolean(r.error) || r.data.length === 0))
+  const sinalProf = exigir(await prof1.from('agenda_revisoes').select('profissional_id'), 'sinal do profissional')
+  verificar('Profissional recebe somente o sinal da própria agenda', sinalProf.length > 0 && sinalProf.every(x => x.profissional_id === profA.id))
+
+  // ================= Vários serviços e recorrência (migração 012) =================
+  const D6 = somarDiasTexto(D, 6)
+  const etapas = lista => lista.map(([servico, profissional, hora, data = D6]) => ({ servico_id: servico.id, profissional_id: profissional.id, data, hora }))
+  const doGrupo = async id => exigir(await admin.from('agendamentos').select('id, status, versao, inicio, grupo_ordem').eq('grupo_id', id).order('grupo_ordem'), 'etapas')
+  const g1 = randomUUID()
+  const grupo = await secretaria.rpc('criar_grupo_agendamentos', { p_grupo_id: g1, p_cliente_id: cliente2.id, p_etapas: etapas([[serv60, profA, '08:00'], [serv60, profB, '09:00']]), p_observacao: null, p_justificativa_conflito: null })
+  const reenvio = await secretaria.rpc('criar_grupo_agendamentos', { p_grupo_id: g1, p_cliente_id: cliente2.id, p_etapas: etapas([[serv60, profA, '08:00'], [serv60, profB, '09:00']]), p_observacao: null, p_justificativa_conflito: null })
+  verificar('Marcação com dois serviços consecutivos é criada uma única vez (reenvio não duplica)', !grupo.error && !reenvio.error && (await doGrupo(g1)).length === 2, grupo.error?.message)
+  exigir(await admin.rpc('criar_bloqueio', { p_profissional_id: profB, p_data_inicio: D6, p_data_fim: D6, p_hora_inicio: '15:00', p_hora_fim: '16:00', p_motivo: 'Bloqueio (teste de marcação)', p_dia_inteiro: false }), 'bloqueio marcação')
+  const g2 = randomUUID()
+  const falhaG2 = await secretaria.rpc('criar_grupo_agendamentos', { p_grupo_id: g2, p_cliente_id: cliente3.id, p_etapas: etapas([[serv60, profA, '14:00'], [serv60, profB, '15:00']]), p_observacao: null, p_justificativa_conflito: null })
+  verificar('Falha em uma etapa não cria nenhuma reserva da marcação', /^Etapa 2/.test(falhaG2.error?.message ?? '') && (await doGrupo(g2)).length === 0, falhaG2.error?.message)
+  const simultaneasGrupo = await Promise.all([
+    secretaria.rpc('criar_grupo_agendamentos', { p_grupo_id: randomUUID(), p_cliente_id: cliente3.id, p_etapas: etapas([[serv60, profA, '10:00'], [serv60, profB, '11:00']]), p_observacao: null, p_justificativa_conflito: null }),
+    admin.rpc('criar_grupo_agendamentos', { p_grupo_id: randomUUID(), p_cliente_id: cliente3.id, p_etapas: etapas([[serv60, profB, '10:00'], [serv60, profA, '11:00']]), p_observacao: null, p_justificativa_conflito: null }),
+  ])
+  verificar(`Duas marcações simultâneas para a mesma cliente no mesmo período: apenas uma é criada (obtidas: ${simultaneasGrupo.filter(r => !r.error).length})`, simultaneasGrupo.filter(r => !r.error).length === 1)
+  const antesG1 = await doGrupo(g1)
+  const reagG1 = await secretaria.rpc('reagendar_grupo', { p_grupo_id: g1, p_data: D6, p_hora: '13:00', p_motivo: 'Teste do grupo', p_versoes: Object.fromEntries(antesG1.map(e => [e.id, e.versao])), p_justificativa_conflito: null })
+  verificar('Reagendar a marcação inteira move todas as etapas', !reagG1.error && (await doGrupo(g1)).every((e, i) => new Date(e.inicio).getTime() - new Date(antesG1[i].inicio).getTime() === 5 * 3600000), reagG1.error?.message)
+  const cancG1 = await secretaria.rpc('cancelar_grupo', { p_grupo_id: g1, p_motivo: 'Fim do teste do grupo', p_versoes: Object.fromEntries((await doGrupo(g1)).map(e => [e.id, e.versao])) })
+  verificar('Cancelar a marcação inteira cancela as etapas', !cancG1.error && (await doGrupo(g1)).every(e => e.status === 'cancelado'), cancG1.error?.message)
+
+  const S0 = somarDiasTexto(D, 7)
+  const serieArgs = { p_cliente_id: cliente2.id, p_servico_id: serv30.id, p_profissional_id: profA.id, p_data_inicial: S0, p_hora: '17:00', p_frequencia: 'semanal', p_quantidade: 3, p_data_final: null, p_dia_inexistente: null, p_justificativa_conflito: null }
+  exigir(await admin.rpc('criar_bloqueio', { p_profissional_id: profA.id, p_data_inicio: somarDiasTexto(S0, 7), p_data_fim: somarDiasTexto(S0, 7), p_hora_inicio: null, p_hora_fim: null, p_motivo: 'Feriado (teste de série)', p_dia_inteiro: true }), 'feriado série')
+  const previa = exigir(await secretaria.rpc('prever_serie', serieArgs), 'prévia')
+  verificar('Prévia da série mostra o feriado como indisponível', previa.length === 3 && previa[1].situacao === 'indisponivel')
+  const s1 = randomUUID()
+  const { p_justificativa_conflito: _j, ...semJust } = serieArgs
+  const parcialSilenciosa = await secretaria.rpc('criar_serie', { p_serie_id: s1, ...semJust, p_datas: previa.map(p => p.data), p_observacao: null, p_justificativa_conflito: null })
+  verificar('Série com data indisponível não é criada parcialmente', Boolean(parcialSilenciosa.error) && exigir(await admin.from('agendamentos').select('id').eq('serie_id', s1), 'série vazia').length === 0)
+  const disponiveis = previa.filter(p => p.situacao === 'disponivel').map(p => p.data)
+  const serie = await secretaria.rpc('criar_serie', { p_serie_id: s1, ...semJust, p_datas: disponiveis, p_observacao: null, p_justificativa_conflito: null })
+  await secretaria.rpc('criar_serie', { p_serie_id: s1, ...semJust, p_datas: disponiveis, p_observacao: null, p_justificativa_conflito: null })
+  const ocorrencias = exigir(await admin.from('agendamentos').select('id, versao, serie_ordem').eq('serie_id', s1).order('serie_ordem'), 'ocorrências')
+  verificar('Série criada só com as datas escolhidas, sem duplicar no reenvio', !serie.error && ocorrencias.length === 2, serie.error?.message)
+  const cancSerie = await secretaria.rpc('cancelar_serie', { p_serie_id: s1, p_a_partir_de: null, p_motivo: 'Fim do teste da série', p_versoes: Object.fromEntries(ocorrencias.map(o => [o.id, o.versao])) })
+  verificar('Cancelar toda a série cancela as ocorrências futuras', cancSerie.data === 2, cancSerie.error?.message)
+  const profSerie = await prof1.rpc('prever_serie', serieArgs)
+  verificar('Profissional não cria séries nem marcações', profSerie.error?.code === '42501')
 } finally {
   // ---------- Limpeza ----------
-  const ativos = (await agendaDoDia(admin)).filter(i => ['agendado', 'confirmado', 'chegou'].includes(i.status))
-  for (const item of ativos) await admin.rpc('cancelar_agendamento', { p_id: item.id, p_motivo: 'Limpeza do teste de integração' })
-  const bloqueios = exigir(await admin.from('bloqueios').select('id').eq('profissional_id', profA.id).is('removido_em', null), 'bloqueios')
+  const diasTeste = [0, 1, 2, 3, 4, 5, 6, 7, 14, 21].map(n => somarDiasTexto(D, n))
+  const ativos = (await Promise.all(diasTeste.map(dia => agendaDoDiaEm(admin, dia)))).flat().filter(i => ['agendado', 'confirmado', 'chegou'].includes(i.status))
+  for (const item of ativos) await admin.rpc('cancelar_agendamento', { p_id: item.id, p_motivo: 'Limpeza do teste de integração', p_versao: item.versao })
+  const emAndamento = (await Promise.all(diasTeste.map(dia => agendaDoDiaEm(admin, dia)))).flat().filter(i => i.status === 'em_atendimento')
+  for (const item of emAndamento) await admin.rpc('alterar_status_agendamento', { p_id: item.id, p_status: 'concluido', p_versao: item.versao })
+  const salaTeste = (await admin.from('recursos').select('id').eq('nome', 'Teste Sala Integração')).data?.[0]
+  if (salaTeste) {
+    await admin.from('servico_recursos').delete().eq('recurso_id', salaTeste.id)
+    await admin.from('recursos').update({ ativo: false }).eq('id', salaTeste.id)
+  }
+  const bloqueios = exigir(await admin.from('bloqueios').select('id').in('profissional_id', [profA.id, profB.id]).is('removido_em', null).gte('inicio', `${D}T00:00:00Z`), 'bloqueios')
   for (const b of bloqueios) await admin.rpc('remover_bloqueio', { p_id: b.id, p_motivo: 'Limpeza do teste de integração' })
   for (const dia of datasPublicas) {
     const doDia = exigir(await admin.rpc('listar_agenda', { p_data_inicio: dia, p_data_fim: dia, p_profissional_id: profC.id }), 'agenda C')
-    for (const item of doDia.filter(i => ['agendado', 'confirmado', 'chegou'].includes(i.status))) await admin.rpc('cancelar_agendamento', { p_id: item.id, p_motivo: 'Limpeza do teste de integração' })
+    for (const item of doDia.filter(i => ['agendado', 'confirmado', 'chegou'].includes(i.status))) await admin.rpc('cancelar_agendamento', { p_id: item.id, p_motivo: 'Limpeza do teste de integração', p_versao: item.versao })
   }
   await secretaria.auth.updateUser({ data: { papel: null, role: null } })
   bloqueiosCriados.length = 0

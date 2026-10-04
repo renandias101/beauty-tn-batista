@@ -1,8 +1,19 @@
 // Converte erros do Supabase em mensagens claras, sem expor detalhes internos (RF10).
 
-interface ErroComCodigo { code?: string; message?: string; name?: string; context?: unknown }
+interface ErroComCodigo { code?: string; message?: string; name?: string; context?: unknown; hint?: string | null }
 
-export class ErroDeOperacao extends Error {}
+/** Situações que a interface trata de forma especial (o servidor informa no campo "hint"). */
+export type DicaDeErro = 'conflito_cliente' | 'versao_desatualizada'
+
+export class ErroDeOperacao extends Error {
+  constructor(message: string, readonly dica?: DicaDeErro) { super(message) }
+}
+
+export const dicaDoErro = (erro: unknown): DicaDeErro | null => {
+  if (erro instanceof ErroDeOperacao) return erro.dica ?? null
+  const dica = (erro as ErroComCodigo | null)?.hint
+  return dica === 'conflito_cliente' || dica === 'versao_desatualizada' ? dica : null
+}
 
 export const mensagemDeErro = (erro: unknown): string => {
   if (erro instanceof ErroDeOperacao) return erro.message

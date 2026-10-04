@@ -1,13 +1,12 @@
 // Mesmas assinaturas de src/services, operando sobre os dados fictícios do navegador.
 // Usado somente quando modoDemo é verdadeiro.
-import { agoraNoFuso, deMinutos, diaDaSemana, paraMinutos, somarDias, somarMinutos } from '../lib/datas'
-import { bloqueioNaData, calcularHorariosLivres } from '../lib/horariosLivres'
+import { agoraNoFuso, somarDias, somarMinutos } from '../lib/datas'
 import { ErroDeOperacao } from '../lib/erros'
 import { FORMATO_USUARIO } from '../lib/acesso'
 import { ocupaHorario } from '../lib/status'
 import { novoUuid } from '../lib/uuid'
-import type { NovoAgendamento } from '../services/agenda'
-import type { Bloqueio, Cliente, Disponibilidade, Excecao, FaixaJornada, Habilitacao, ItemAgenda, Papel, Profissional, RegistroHistorico, Servico, StatusAgendamento, Usuario } from '../types'
+import type { DadosReagendamento, NovoAgendamento } from '../services/agenda'
+import type { Bloqueio, Cliente, Disponibilidade, Excecao, FaixaJornada, Habilitacao, ItemAgenda, Papel, Profissional, Recurso, RegistroHistorico, Servico, ServicoRecurso, StatusAgendamento, StatusEspera, TipoComunicacao, TipoRecurso, Usuario } from '../types'
 import { gravar, obterBase, perfilDemo } from './estado'
 import * as motor from './motor'
 
@@ -37,11 +36,40 @@ export async function agendamentosDoCliente(clienteId: string) {
 }
 
 export const criarAgendamento = async (a: NovoAgendamento) => { alterar(() => motor.criarAgendamento(obterBase(), perfilDemo(), a)) }
-export const alterarStatus = async (id: string, status: StatusAgendamento) => alterar(() => motor.alterarStatus(obterBase(), perfilDemo(), id, status))
-export const cancelarAgendamento = async (id: string, motivo: string) => alterar(() => motor.cancelarAgendamento(obterBase(), perfilDemo(), id, motivo))
-export const reagendarAgendamento = async (id: string, novo: { data: string; hora: string; profissionalId: string; motivo: string; duracaoMinutos?: number }) =>
-  alterar(() => motor.reagendarAgendamento(obterBase(), perfilDemo(), id, novo))
-export const editarAgendamento = async (id: string, observacao: string, encaixe: boolean) => alterar(() => motor.editarAgendamento(obterBase(), perfilDemo(), id, observacao, encaixe))
+export const alterarStatus = async (id: string, status: StatusAgendamento, versao: number) => alterar(() => motor.alterarStatus(obterBase(), perfilDemo(), id, status, versao))
+export const corrigirStatus = async (id: string, status: StatusAgendamento, justificativa: string, versao: number) => alterar(() => motor.corrigirStatus(obterBase(), perfilDemo(), id, status, justificativa, versao))
+export const cancelarAgendamento = async (id: string, motivo: string, versao: number) => alterar(() => motor.cancelarAgendamento(obterBase(), perfilDemo(), id, motivo, versao))
+export const reagendarAgendamento = async (id: string, novo: DadosReagendamento, versao: number) => alterar(() => motor.reagendarAgendamento(obterBase(), perfilDemo(), id, novo, versao))
+export const editarAgendamento = async (id: string, observacao: string, encaixe: boolean, versao: number) => alterar(() => motor.editarAgendamento(obterBase(), perfilDemo(), id, observacao, encaixe, versao))
+
+export async function horariosLivres(o: { servicoId: string; profissionalId: string; data: string; ignorarId?: string; duracaoMinutos?: number }) {
+  motor.exigirPapel(perfilDemo(), equipe)
+  return motor.horariosLivres(obterBase(), o)
+}
+
+export const registrarComunicacao = async (id: string, agendamentoId: string, tipo: TipoComunicacao) => alterar(() => motor.registrarComunicacao(obterBase(), perfilDemo(), id, agendamentoId, tipo))
+export const listarComunicacoes = async (agendamentoId: string) => motor.listarComunicacoes(obterBase(), perfilDemo(), agendamentoId)
+export const candidatosListaEspera = async (profissionalId: string, inicio: string, ocupadoAte: string) => motor.candidatosListaEspera(obterBase(), perfilDemo(), profissionalId, inicio, ocupadoAte)
+
+// ---------- Marcação com vários serviços e séries ----------
+
+export const criarMarcacao = async (m: Parameters<typeof motor.criarMarcacao>[2]) => { alterar(() => motor.criarMarcacao(obterBase(), perfilDemo(), m)) }
+export const cancelarMarcacao = async (grupoId: string, motivo: string, versoes: Record<string, number>) => alterar(() => motor.cancelarMarcacao(obterBase(), perfilDemo(), grupoId, motivo, versoes))
+export const reagendarMarcacao = async (grupoId: string, novo: { data: string; hora: string; motivo: string; justificativaConflito?: string }, versoes: Record<string, number>) =>
+  alterar(() => motor.reagendarMarcacao(obterBase(), perfilDemo(), grupoId, novo, versoes))
+export const agendamentosVinculados = async (v: { grupoId?: string; serieId?: string }) => motor.agendamentosVinculados(obterBase(), perfilDemo(), v)
+export const preverSerie = async (s: motor.SerieDadosDemo) => motor.preverSerie(obterBase(), perfilDemo(), s)
+export const criarSerie = async (id: string, s: motor.SerieDadosDemo, datas: string[], observacao: string) => alterar(() => motor.criarSerie(obterBase(), perfilDemo(), id, s, datas, observacao))
+export const cancelarSerie = async (serieId: string, aPartirDe: string | null, motivo: string, versoes: Record<string, number>) => alterar(() => motor.cancelarSerie(obterBase(), perfilDemo(), serieId, aPartirDe, motivo, versoes))
+export const reagendarSerie = async (serieId: string, aPartirDe: string | null, novo: { hora: string; profissionalId: string | null; motivo: string; justificativaConflito?: string }, versoes: Record<string, number>) =>
+  alterar(() => motor.reagendarSerie(obterBase(), perfilDemo(), serieId, aPartirDe, novo, versoes))
+
+// ---------- Lista de espera ----------
+
+export const listarListaEspera = async (status?: StatusEspera) => motor.listarListaEspera(obterBase(), perfilDemo(), status)
+export const criarEntradaEspera = async (e: Parameters<typeof motor.criarEntradaEspera>[2]) => alterar(() => motor.criarEntradaEspera(obterBase(), perfilDemo(), e))
+export const atualizarEntradaEspera = async (id: string, status: StatusEspera, observacao: string, versao: number) => alterar(() => motor.atualizarEntradaEspera(obterBase(), perfilDemo(), id, status, observacao, versao))
+export const contatosDaEntrada = async (id: string) => motor.contatosDaEntrada(obterBase(), perfilDemo(), id)
 
 export async function historicoDoAgendamento(id: string): Promise<RegistroHistorico[]> {
   motor.exigirPapel(perfilDemo(), ['admin', 'secretaria'])
@@ -104,15 +132,16 @@ export async function listarServicos(): Promise<Servico[]> {
   return copia([...obterBase().servicos].sort((a, b) => a.nome.localeCompare(b.nome)))
 }
 
-export async function salvarServico(s: { id?: string; nome: string; duracaoMinutos: number; categoria: string; descricao: string; ativo: boolean }): Promise<Servico> {
+export async function salvarServico(s: { id?: string; nome: string; duracaoMinutos: number; preparacaoMinutos: number; categoria: string; descricao: string; ativo: boolean }): Promise<Servico> {
   motor.exigirPapel(perfilDemo(), ['admin'])
   if (!s.nome.trim()) falhar('Informe o nome do serviço.')
   if (!Number.isInteger(s.duracaoMinutos) || s.duracaoMinutos <= 0 || s.duracaoMinutos > 720) falhar('A duração deve ser maior que zero e de no máximo 720 minutos.')
+  if (!Number.isInteger(s.preparacaoMinutos) || s.preparacaoMinutos < 0 || s.preparacaoMinutos > 240) falhar('A preparação deve ser de 0 a 240 minutos.')
   return alterar(() => {
     const base = obterBase()
     const existente = s.id ? base.servicos.find(x => x.id === s.id) ?? falhar('Serviço não encontrado.') : null
     // Reservas guardam a própria duração: mudar a duração padrão não as altera (CA08).
-    const valores = { nome: s.nome.trim(), duracaoMinutos: s.duracaoMinutos, categoria: s.categoria.trim() || null, descricao: s.descricao.trim() || null, ativo: s.ativo }
+    const valores = { nome: s.nome.trim(), duracaoMinutos: s.duracaoMinutos, preparacaoMinutos: s.preparacaoMinutos, categoria: s.categoria.trim() || null, descricao: s.descricao.trim() || null, ativo: s.ativo }
     const salvo = existente ? Object.assign(existente, valores) : { id: novoUuid(), ...valores }
     if (!existente) base.servicos.push(salvo)
     return copia(salvo)
@@ -130,7 +159,55 @@ export async function definirHabilitacoes(atuais: Habilitacao[], desejadas: Habi
   const retirar = new Set(atuais.map(chave))
   alterar(() => {
     const base = obterBase()
-    base.habilitacoes = [...base.habilitacoes.filter(h => !retirar.has(chave(h))), ...desejadas]
+    // Habilitações mantidas preservam a duração específica já configurada.
+    const mantidas = new Map(base.habilitacoes.map(h => [chave(h), h.duracaoMinutos]))
+    base.habilitacoes = [...base.habilitacoes.filter(h => !retirar.has(chave(h))), ...desejadas.map(h => ({ ...h, duracaoMinutos: mantidas.get(chave(h)) ?? null }))]
+  })
+}
+
+export async function definirDuracaoProfissional(profissionalId: string, servicoId: string, duracaoMinutos: number | null) {
+  motor.exigirPapel(perfilDemo(), ['admin'])
+  if (duracaoMinutos !== null && (!Number.isInteger(duracaoMinutos) || duracaoMinutos <= 0 || duracaoMinutos > 720)) falhar('A duração deve ser maior que zero e de no máximo 720 minutos.')
+  alterar(() => {
+    const habilitacao = obterBase().habilitacoes.find(h => h.profissionalId === profissionalId && h.servicoId === servicoId) ?? falhar('Habilitação não encontrada. Salve os serviços habilitados antes.')
+    habilitacao.duracaoMinutos = duracaoMinutos
+  })
+}
+
+// ---------- Recursos compartilhados ----------
+
+export async function listarRecursos(): Promise<Recurso[]> {
+  motor.exigirPapel(perfilDemo(), equipe)
+  return copia([...obterBase().recursos].sort((a, b) => a.nome.localeCompare(b.nome)))
+}
+
+export async function salvarRecurso(r: { id?: string; nome: string; tipo: TipoRecurso; capacidade: number; ativo: boolean }): Promise<Recurso> {
+  motor.exigirPapel(perfilDemo(), ['admin'])
+  const nome = r.nome.trim()
+  if (!nome || nome.length > 80) falhar('Informe o nome do recurso (até 80 caracteres).')
+  if (!Number.isInteger(r.capacidade) || r.capacidade < 1 || r.capacidade > 20) falhar('A capacidade deve ser de 1 a 20.')
+  return alterar(() => {
+    const base = obterBase()
+    if (base.recursos.some(x => x.id !== r.id && x.nome.trim().toLowerCase() === nome.toLowerCase())) falhar('Este registro já existe.')
+    const existente = r.id ? base.recursos.find(x => x.id === r.id) ?? falhar('Recurso não encontrado.') : null
+    if (existente) motor.validarAlteracaoRecurso(base, existente, r)
+    const valores = { nome, tipo: r.tipo, capacidade: r.capacidade, ativo: r.ativo }
+    const salvo = existente ? Object.assign(existente, valores) : { id: novoUuid(), ...valores }
+    if (!existente) base.recursos.push(salvo)
+    return copia(salvo)
+  })
+}
+
+export async function listarServicoRecursos(): Promise<ServicoRecurso[]> {
+  motor.exigirPapel(perfilDemo(), equipe)
+  return copia(obterBase().servicoRecursos)
+}
+
+export async function definirRecursosDoServico(servicoId: string, desejados: string[]) {
+  motor.exigirPapel(perfilDemo(), ['admin'])
+  alterar(() => {
+    const base = obterBase()
+    base.servicoRecursos = [...base.servicoRecursos.filter(v => v.servicoId !== servicoId), ...desejados.map(recursoId => ({ servicoId, recursoId }))]
   })
 }
 
@@ -247,25 +324,21 @@ export async function profissionaisPublicos(servicoId: string) {
 
 export async function horariosDisponiveis(servicoId: string, profissionalId: string, dataInicio: string, dataFim: string) {
   const base = obterBase()
-  const servico = base.servicos.find(s => s.id === servicoId && s.ativo) ?? falhar('Serviço indisponível para consulta.')
+  if (!base.servicos.some(s => s.id === servicoId && s.ativo)) falhar('Serviço indisponível para consulta.')
   if (!habilitadosAtivos(servicoId).some(p => p.id === profissionalId)) falhar('Profissional indisponível para este serviço.')
   const agora = agoraNoFuso(motor.FUSO_DEMO)
   const ultimo = somarDias(agora.data, configuracaoDemo().horizonteDias)
   const resultado: { data: string; hora: string }[] = []
   for (let data = dataInicio < agora.data ? agora.data : dataInicio; data <= dataFim && data <= ultimo; data = somarDias(data, 1)) {
-    const faixas = [
-      ...base.disponibilidades.filter(d => d.profissionalId === profissionalId && d.diaSemana === diaDaSemana(data)),
-      ...base.excecoes.filter(e => !e.removidoEm && e.profissionalId === profissionalId && e.data === data),
-    ]
-    const ocupados = [
-      ...base.bloqueios.filter(b => !b.removidoEm && b.profissionalId === profissionalId).map(b => bloqueioNaData(b, data, motor.FUSO_DEMO)).filter(Boolean) as { inicio: number; fim: number }[],
-      ...base.agendamentos.filter(a => a.profissionalId === profissionalId && a.data === data && ocupaHorario(a.status))
-        .map(a => ({ inicio: paraMinutos(a.horaInicio), fim: paraMinutos(a.horaInicio) + a.duracaoMinutos })),
-    ]
-    const livres = calcularHorariosLivres({ faixas, ocupados, duracaoMinutos: servico.duracaoMinutos, aPartirDeMinutos: data === agora.data ? paraMinutos(agora.hora) + 1 : 0 })
-    for (const minuto of livres) resultado.push({ data, hora: deMinutos(minuto) })
+    for (const hora of motor.horariosLivres(base, { servicoId, profissionalId, data })) resultado.push({ data, hora })
   }
   return resultado
+}
+
+export async function duracaoPublica(servicoId: string, profissionalId: string) {
+  const base = obterBase()
+  if (!base.servicos.some(s => s.id === servicoId && s.ativo) || !base.profissionais.some(p => p.id === profissionalId && p.ativo)) return null
+  return motor.duracaoEfetiva(base, profissionalId, servicoId)
 }
 
 // ---------- Usuários (sem senhas: a demonstração não autentica) ----------

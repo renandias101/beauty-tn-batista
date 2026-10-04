@@ -4,6 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  server: { port: 5180, strictPort: true, host: true },
+  // As pastas geradas pelo build ficam fora da observação: no Google Drive, a gravação delas derrubava o servidor de desenvolvimento.
+  server: { port: 5180, strictPort: true, host: true, watch: { ignored: ['**/dist/**', '**/dist-demo/**'] } },
   preview: { port: 5180, strictPort: true, host: true },
 })

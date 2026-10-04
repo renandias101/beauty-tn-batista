@@ -5,14 +5,14 @@ import { CabecalhoPagina, Carregando, FalhaCarregamento, Vazio } from '../compon
 import { Modal } from '../components/Modal'
 import { mensagemDeErro } from '../lib/erros'
 import { useCarregar } from '../lib/useCarregar'
-import { definirHabilitacoes, listarHabilitacoes, listarProfissionais, listarServicos, salvarServico } from '../services/cadastros'
-import type { Habilitacao, Profissional, Servico } from '../types'
+import { definirHabilitacoes, definirRecursosDoServico, listarHabilitacoes, listarProfissionais, listarRecursos, listarServicoRecursos, listarServicos, salvarServico } from '../services/cadastros'
+import type { Habilitacao, Profissional, Recurso, Servico, ServicoRecurso } from '../types'
 
 export function ServicosPage() {
   const avisar = useAvisos()
   const dados = useCarregar(async () => {
-    const [servicos, profissionais, habilitacoes] = await Promise.all([listarServicos(), listarProfissionais(), listarHabilitacoes()])
-    return { servicos, profissionais, habilitacoes }
+    const [servicos, profissionais, habilitacoes, recursos, servicoRecursos] = await Promise.all([listarServicos(), listarProfissionais(), listarHabilitacoes(), listarRecursos(), listarServicoRecursos()])
+    return { servicos, profissionais, habilitacoes, recursos, servicoRecursos }
   }, [])
   const [busca, setBusca] = useState('')
   const [editando, setEditando] = useState<Servico | 'novo' | null>(null)
@@ -23,10 +23,14 @@ export function ServicosPage() {
     .filter(h => h.servicoId === servicoId)
     .map(h => dados.dados?.profissionais.find(p => p.id === h.profissionalId)?.nome)
     .filter(Boolean)
+  const nomesRecursos = (servicoId: string) => (dados.dados?.servicoRecursos ?? [])
+    .filter(v => v.servicoId === servicoId)
+    .map(v => dados.dados?.recursos.find(r => r.id === v.recursoId)?.nome)
+    .filter(Boolean)
 
   return (
     <div>
-      <CabecalhoPagina sobretitulo="Catálogo" titulo="Serviços" descricao="A duração padrão preenche novos agendamentos; reservas existentes mantêm a duração original."
+      <CabecalhoPagina sobretitulo="Catálogo" titulo="Serviços" descricao="Duração, preparação e recursos valem para novos agendamentos; reservas existentes mantêm o que foi gravado."
         acoes={<button type="button" onClick={() => setEditando('novo')} className="botao botao-primario"><Plus size={18} />Novo serviço</button>} />
       <div className="cartao overflow-hidden">
         <div className="border-b border-border p-4">
@@ -48,8 +52,9 @@ export function ServicosPage() {
                       <span className="text-sm font-bold">{s.nome}</span>
                       <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-bold ${s.ativo ? 'bg-success-soft text-success' : 'bg-muted text-muted-foreground'}`}>{s.ativo ? 'Ativo' : 'Inativo'}</span>
                     </div>
-                    <div className="mt-1 text-sm text-muted-foreground">{s.duracaoMinutos} minutos{s.categoria ? ` · ${s.categoria}` : ''}</div>
+                    <div className="mt-1 text-sm text-muted-foreground">{s.duracaoMinutos} minutos{s.preparacaoMinutos ? ` + ${s.preparacaoMinutos} de preparação` : ''}{s.categoria ? ` · ${s.categoria}` : ''}</div>
                     <div className="mt-2 text-xs text-muted-foreground">{nomes.length ? nomes.join(', ') : 'Nenhum profissional habilitado'}</div>
+                    {nomesRecursos(s.id).length > 0 && <div className="mt-1 text-xs text-muted-foreground">Usa: {nomesRecursos(s.id).join(', ')}</div>}
                   </button>
                 )
               })}
@@ -58,17 +63,20 @@ export function ServicosPage() {
       </div>
       {editando && dados.dados && (
         <ServicoModal servico={editando === 'novo' ? undefined : editando} profissionais={dados.dados.profissionais} habilitacoes={dados.dados.habilitacoes}
+          recursos={dados.dados.recursos} servicoRecursos={dados.dados.servicoRecursos}
           onFechar={() => setEditando(null)} onSalvo={() => { avisar(editando === 'novo' ? 'Serviço cadastrado.' : 'Serviço atualizado.'); setEditando(null); dados.recarregar() }} />
       )}
     </div>
   )
 }
 
-function ServicoModal({ servico, profissionais, habilitacoes, onSalvo, onFechar }: {
-  servico?: Servico; profissionais: Profissional[]; habilitacoes: Habilitacao[]; onSalvo: () => void; onFechar: () => void
+function ServicoModal({ servico, profissionais, habilitacoes, recursos, servicoRecursos, onSalvo, onFechar }: {
+  servico?: Servico; profissionais: Profissional[]; habilitacoes: Habilitacao[]; recursos: Recurso[]; servicoRecursos: ServicoRecurso[]; onSalvo: () => void; onFechar: () => void
 }) {
   const atuais = servico ? habilitacoes.filter(h => h.servicoId === servico.id) : []
-  const [form, setForm] = useState({ nome: servico?.nome ?? '', duracao: String(servico?.duracaoMinutos ?? 60), categoria: servico?.categoria ?? '', descricao: servico?.descricao ?? '', ativo: servico?.ativo ?? true })
+  const recursosAtuais = servico ? servicoRecursos.filter(v => v.servicoId === servico.id).map(v => v.recursoId) : []
+  const [recursosMarcados, setRecursosMarcados] = useState(() => new Set(recursosAtuais))
+  const [form, setForm] = useState({ nome: servico?.nome ?? '', duracao: String(servico?.duracaoMinutos ?? 60), preparacao: String(servico?.preparacaoMinutos ?? 0), categoria: servico?.categoria ?? '', descricao: servico?.descricao ?? '', ativo: servico?.ativo ?? true })
   const [marcados, setMarcados] = useState(() => new Set(atuais.map(h => h.profissionalId)))
   const [idSalvo, setIdSalvo] = useState(servico?.id)
   const [salvando, setSalvando] = useState(false)
@@ -80,14 +88,18 @@ function ServicoModal({ servico, profissionais, habilitacoes, onSalvo, onFechar 
     const duracaoMinutos = Number(form.duracao)
     if (!form.nome.trim()) { setErro('Informe o nome do serviço.'); return }
     if (!Number.isInteger(duracaoMinutos) || duracaoMinutos <= 0 || duracaoMinutos > 720) { setErro('A duração deve ser um número inteiro de minutos, maior que zero e até 720.'); return }
+    const preparacaoMinutos = Number(form.preparacao)
+    if (!Number.isInteger(preparacaoMinutos) || preparacaoMinutos < 0 || preparacaoMinutos > 240) { setErro('A preparação deve ser um número inteiro de 0 a 240 minutos.'); return }
     setSalvando(true)
     setErro('')
     try {
       // Guarda o id após a primeira gravação: se as habilitações falharem, tentar de novo não duplica o serviço.
-      const salvo = await salvarServico({ id: idSalvo, nome: form.nome, duracaoMinutos, categoria: form.categoria, descricao: form.descricao, ativo: form.ativo })
+      const salvo = await salvarServico({ id: idSalvo, nome: form.nome, duracaoMinutos, preparacaoMinutos, categoria: form.categoria, descricao: form.descricao, ativo: form.ativo })
       setIdSalvo(salvo.id)
       const vigentes = idSalvo === servico?.id ? atuais : (await listarHabilitacoes()).filter(h => h.servicoId === salvo.id)
       await definirHabilitacoes(vigentes, [...marcados].map(profissionalId => ({ profissionalId, servicoId: salvo.id })))
+      const recursosVigentes = idSalvo === servico?.id ? recursosAtuais : (await listarServicoRecursos()).filter(v => v.servicoId === salvo.id).map(v => v.recursoId)
+      await definirRecursosDoServico(salvo.id, recursosVigentes, [...recursosMarcados])
       onSalvo()
     } catch (falha) {
       setErro(mensagemDeErro(falha))
@@ -104,8 +116,12 @@ function ServicoModal({ servico, profissionais, habilitacoes, onSalvo, onFechar 
           <label className="rotulo">Duração padrão (minutos)<input className="campo" type="number" required min={1} max={720} value={form.duracao} onChange={e => setForm({ ...form, duracao: e.target.value })} /></label>
           <label className="rotulo">Categoria (opcional)<input className="campo" maxLength={60} placeholder="Ex.: Cílios" value={form.categoria} onChange={e => setForm({ ...form, categoria: e.target.value })} /></label>
         </div>
+        <label className="rotulo">Preparação após o atendimento (minutos)
+          <input className="campo" type="number" min={0} max={240} required value={form.preparacao} onChange={e => setForm({ ...form, preparacao: e.target.value })} />
+          <span className="mt-1 block font-normal">Tempo de limpeza ou organização. Ocupa a agenda do profissional e dos recursos, mas não é informado à cliente. Use 0 se não houver.</span>
+        </label>
         <label className="rotulo">Descrição curta (opcional)<textarea className="campo resize-none" rows={2} maxLength={300} value={form.descricao} onChange={e => setForm({ ...form, descricao: e.target.value })} /></label>
-        {servico && servico.duracaoMinutos !== Number(form.duracao) && <p className="alerta-info">A nova duração vale para os próximos agendamentos. Reservas já existentes não mudam.</p>}
+        {servico && (servico.duracaoMinutos !== Number(form.duracao) || servico.preparacaoMinutos !== Number(form.preparacao)) && <p className="alerta-info">A nova duração ou preparação vale para os próximos agendamentos. Reservas já existentes não mudam.</p>}
         <fieldset>
           <legend className="rotulo mb-2">Profissionais habilitados</legend>
           {profissionais.length === 0 ? <p className="text-sm text-muted-foreground">Cadastre profissionais primeiro.</p> : (
@@ -119,6 +135,21 @@ function ServicoModal({ servico, profissionais, habilitacoes, onSalvo, onFechar 
               ))}
             </div>
           )}
+        </fieldset>
+        <fieldset>
+          <legend className="rotulo mb-2">Salas e equipamentos necessários (opcional)</legend>
+          {recursos.length === 0 ? <p className="text-sm text-muted-foreground">Nenhum recurso cadastrado. Serviços sem recurso não precisam de cadastro (menu Recursos).</p> : (
+            <div className="grid gap-2 sm:grid-cols-2">
+              {recursos.filter(r => r.ativo || recursosMarcados.has(r.id)).map(r => (
+                <label key={r.id} className={`flex items-center gap-2 rounded-lg border border-border p-2.5 text-sm ${r.ativo ? '' : 'opacity-60'}`}>
+                  <input type="checkbox" className="h-4 w-4" checked={recursosMarcados.has(r.id)}
+                    onChange={e => setRecursosMarcados(atual => { const novo = new Set(atual); if (e.target.checked) novo.add(r.id); else novo.delete(r.id); return novo })} />
+                  {r.nome}{r.capacidade > 1 ? ` (${r.capacidade} simultâneos)` : ''}{r.ativo ? '' : ' (desativado)'}
+                </label>
+              ))}
+            </div>
+          )}
+          <p className="mt-1 text-xs text-muted-foreground">O agendamento verifica e reserva esses recursos. Reservas já existentes mantêm os recursos gravados.</p>
         </fieldset>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" className="h-4 w-4" checked={form.ativo} onChange={e => setForm({ ...form, ativo: e.target.checked })} />Serviço ativo para novos agendamentos</label>
         {erro && <p role="alert" className="alerta-erro">{erro}</p>}

@@ -4,22 +4,22 @@
 // duração do serviço, jornada, bloqueios e a ausência de sobreposição por profissional.
 import { agoraNoFuso, diaDaSemana, fimDoMes, inicioDoMes, paraMinutos, somarDias, somarMinutos, deMinutos } from '../lib/datas'
 import { bloqueioNaData, calcularHorariosLivres } from '../lib/horariosLivres'
-import { ocupaHorario } from '../lib/status'
+import { ocupaPeriodo } from '../lib/status'
 import type { Perfil } from '../types'
-import { FUSO_DEMO, alterarStatus, cancelarAgendamento, criarAgendamento, criarBloqueio, instante, reagendarAgendamento, type AgendamentoDemo, type BaseDemo } from './motor'
+import { FUSO_DEMO, alterarStatus, cancelarAgendamento, criarAgendamento, criarBloqueio, criarEntradaEspera, criarMarcacao, criarSerie, duracaoEfetiva, horariosLivres, preverSerie, instante, reagendarAgendamento, registrarComunicacao, type AgendamentoDemo, type BaseDemo } from './motor'
 
 const CORES = ['#9A6A20', '#7F9877', '#B68B5D', '#806456', '#8B789B', '#6D8FA3', '#A56F75', '#708B84']
 
 const PROFISSIONAIS = ['Bianca Demo', 'Camila Demo', 'Daniela Demo', 'Eduarda Demo', 'Fernanda Demo', 'Gabriel Demo', 'Helena Demo', 'Isabela Demo']
 const [BIANCA, CAMILA, DANIELA, EDUARDA, FERNANDA, GABRIEL, HELENA, ISABELA] = PROFISSIONAIS.map((_, i) => `demo-prof-${i + 1}`)
 
-const SERVICOS: [string, number, string, boolean?][] = [
+const SERVICOS: [string, number, string, boolean?, number?][] = [
   ['Maquiagem social', 60, 'Maquiagem'], ['Maquiagem para noivas', 120, 'Maquiagem'],
   ['Depilação de pernas', 45, 'Depilação'], ['Depilação de axilas', 15, 'Depilação'], ['Depilação completa', 90, 'Depilação'],
   ['Corte feminino', 60, 'Cabelos'], ['Escova', 45, 'Cabelos'], ['Coloração', 150, 'Cabelos'],
   ['Design de sobrancelhas', 30, 'Sobrancelhas'], ['Design com henna', 45, 'Sobrancelhas'],
-  ['Micropigmentação de sobrancelhas', 150, 'Micropigmentação'], ['Retoque de micropigmentação', 90, 'Micropigmentação'],
-  ['Extensão de cílios fio a fio', 120, 'Cílios'], ['Manutenção de cílios', 60, 'Cílios'], ['Lash lifting', 60, 'Cílios'],
+  ['Micropigmentação de sobrancelhas', 150, 'Micropigmentação', true, 15], ['Retoque de micropigmentação', 90, 'Micropigmentação', true, 15],
+  ['Extensão de cílios fio a fio', 120, 'Cílios', true, 10], ['Manutenção de cílios', 60, 'Cílios'], ['Lash lifting', 60, 'Cílios'],
   ['Massagem relaxante', 60, 'Massagem'], ['Drenagem linfática', 50, 'Massagem'], ['Massagem com pedras quentes', 75, 'Massagem', false],
 ]
 const servico = (n: number) => `demo-serv-${n}`
@@ -85,8 +85,9 @@ export function gerarBaseDemo(agora = new Date()): BaseDemo {
       ...PROFISSIONAIS.map((nome, i) => ({ usuarioId: `demo-u-prof-${i + 1}`, nome, usuario: `demo.${nome.split(' ')[0].toLowerCase()}`, papel: 'profissional' as const, ativo: true })),
     ],
     profissionais: PROFISSIONAIS.map((nome, i) => ({ id: `demo-prof-${i + 1}`, nome, telefone: `(00) 98000-${String(i + 1).padStart(4, '0')}`, cor: CORES[i], ativo: true, usuarioId: `demo-u-prof-${i + 1}` })),
-    servicos: SERVICOS.map(([nome, duracaoMinutos, categoria, ativo = true], i) => ({ id: servico(i + 1), nome, duracaoMinutos, categoria, descricao: null, ativo })),
-    habilitacoes: Object.entries(HABILITACOES).flatMap(([profissionalId, lista]) => lista.map(n => ({ profissionalId, servicoId: servico(n) }))),
+    servicos: SERVICOS.map(([nome, duracaoMinutos, categoria, ativo = true, preparacaoMinutos = 0], i) => ({ id: servico(i + 1), nome, duracaoMinutos, preparacaoMinutos, categoria, descricao: null, ativo })),
+    // Exemplo de duração específica: Isabela faz a extensão de cílios em 150 minutos (padrão do serviço: 120).
+    habilitacoes: Object.entries(HABILITACOES).flatMap(([profissionalId, lista]) => lista.map(n => ({ profissionalId, servicoId: servico(n), duracaoMinutos: profissionalId === ISABELA && n === 13 ? 150 : null }))),
     disponibilidades: Object.entries(JORNADAS).flatMap(([profissionalId, blocos]) => blocos.flatMap(([dias, faixas]) =>
       dias.flatMap(diaSemana => faixas.map(([horaInicio, horaFim]) => ({ id: `demo-disp-${++sequencia}`, profissionalId, diaSemana, horaInicio, horaFim }))))),
     excecoes: [],
@@ -98,6 +99,20 @@ export function gerarBaseDemo(agora = new Date()): BaseDemo {
     }),
     agendamentos: [],
     historico: [],
+    // Recursos de exemplo: uma sala exclusiva e duas macas de massagem (capacidade 2).
+    recursos: [
+      { id: 'demo-rec-1', nome: 'Sala de micropigmentação', tipo: 'sala', capacidade: 1, ativo: true },
+      { id: 'demo-rec-2', nome: 'Macas de massagem', tipo: 'equipamento', capacidade: 2, ativo: true },
+    ],
+    servicoRecursos: [
+      { servicoId: servico(11), recursoId: 'demo-rec-1' }, { servicoId: servico(12), recursoId: 'demo-rec-1' },
+      { servicoId: servico(16), recursoId: 'demo-rec-2' }, { servicoId: servico(17), recursoId: 'demo-rec-2' }, { servicoId: servico(18), recursoId: 'demo-rec-2' },
+    ],
+    comunicacoes: [],
+    listaEspera: [],
+    contatosEspera: [],
+    grupos: [],
+    series: [],
   }
 
   const atende = (profissionalId: string, data: string) =>
@@ -146,15 +161,15 @@ export function gerarBaseDemo(agora = new Date()): BaseDemo {
 
   const ocupados = (profissionalId: string, data: string, ignorarId?: string) => [
     ...base.bloqueios.filter(b => b.profissionalId === profissionalId && !b.removidoEm).map(b => bloqueioNaData(b, data, FUSO_DEMO)).filter(Boolean) as { inicio: number; fim: number }[],
-    ...base.agendamentos.filter(a => a.id !== ignorarId && a.profissionalId === profissionalId && a.data === data && ocupaHorario(a.status))
-      .map(a => ({ inicio: paraMinutos(a.horaInicio), fim: paraMinutos(a.horaInicio) + a.duracaoMinutos })),
+    ...base.agendamentos.filter(a => a.id !== ignorarId && a.profissionalId === profissionalId && a.data === data && ocupaPeriodo(a.status))
+      .map(a => ({ inicio: paraMinutos(a.horaInicio), fim: paraMinutos(a.horaInicio) + a.duracaoMinutos + a.preparacaoMinutos })),
   ]
   const faixasDoDia = (profissionalId: string, data: string) => [
     ...base.disponibilidades.filter(d => d.profissionalId === profissionalId && d.diaSemana === diaDaSemana(data)),
     ...base.excecoes.filter(e => e.profissionalId === profissionalId && e.data === data),
   ]
-  const livres = (profissionalId: string, data: string, duracao: number, ignorarId?: string, aPartirDe = 0) =>
-    calcularHorariosLivres({ faixas: faixasDoDia(profissionalId, data), ocupados: ocupados(profissionalId, data, ignorarId), duracaoMinutos: duracao, aPartirDeMinutos: aPartirDe })
+  const livres = (profissionalId: string, data: string, duracao: number, preparacao = 0, ignorarId?: string, aPartirDe = 0) =>
+    calcularHorariosLivres({ faixas: faixasDoDia(profissionalId, data), ocupados: ocupados(profissionalId, data, ignorarId), duracaoMinutos: duracao, preparacaoMinutos: preparacao, aPartirDeMinutos: aPartirDe })
 
   let observacoes = 0
   const colocar = (profissionalId: string, dataDesejada: string, sequencial: boolean, encaixe = false) => {
@@ -162,7 +177,7 @@ export function gerarBaseDemo(agora = new Date()): BaseDemo {
     const opcoes = base.servicos.filter(s => s.ativo && base.habilitacoes.some(h => h.profissionalId === profissionalId && h.servicoId === s.id))
     for (let tentativa = 0; tentativa < opcoes.length; tentativa++) {
       const s = tentativa === 0 ? sorte.escolher(opcoes) : opcoes[tentativa]
-      const lista = livres(profissionalId, data, s.duracaoMinutos)
+      const lista = livres(profissionalId, data, duracaoEfetiva(base, profissionalId, s.id) ?? s.duracaoMinutos, s.preparacaoMinutos)
       if (!lista.length) continue
       const redondos = lista.filter(m => m % 30 === 0)
       const minuto = sequencial ? lista[0] : sorte.escolher(redondos.length ? redondos : lista)
@@ -171,7 +186,7 @@ export function gerarBaseDemo(agora = new Date()): BaseDemo {
         return criarAgendamento(base, sorte.numero() < 0.7 ? recepcao : admin, {
           id: `demo-ag-${String(base.agendamentos.length + 1).padStart(2, '0')}`, clienteId: escolherCliente(data), servicoId: s.id, profissionalId,
           data, hora: deMinutos(minuto), observacao: comObservacao ? OBSERVACOES[observacoes++] : '', encaixe,
-        }, agora)
+        }, agora, { permitirPassado: true })
       } catch {
         // O motor recusou (não deveria, pois o horário veio da lista de livres): o exemplo é descartado.
       }
@@ -208,16 +223,17 @@ export function gerarBaseDemo(agora = new Date()): BaseDemo {
   const agoraMs = agora.getTime()
   const inicioMs = (a: AgendamentoDemo) => Date.parse(instante(a.data, a.horaInicio))
   const fimMs = (a: AgendamentoDemo) => Date.parse(instante(a.data, somarMinutos(a.horaInicio, a.duracaoMinutos)))
+  const recepcaoCom = (a: AgendamentoDemo, tipo: 'confirmacao' | 'lembrete') => registrarComunicacao(base, recepcao, `demo-com-${base.comunicacoes.length + 1}`, a.id, tipo, agora)
   const ordenados = [...base.agendamentos].sort((x, y) => inicioMs(x) - inicioMs(y))
   const passado = ordenados.filter(a => fimMs(a) <= agoraMs)
   const emAndamento = ordenados.filter(a => inicioMs(a) <= agoraMs && fimMs(a) > agoraMs)
   const futuro = ordenados.filter(a => inicioMs(a) > agoraMs)
-  const caminho = (a: AgendamentoDemo, passos: AgendamentoDemo['status'][]) => passos.forEach(status => alterarStatus(base, recepcao, a.id, status, agora))
+  const caminho = (a: AgendamentoDemo, passos: AgendamentoDemo['status'][]) => passos.forEach(status => alterarStatus(base, recepcao, a.id, status, a.versao, agora))
   let motivos = 0
 
   passado.forEach((a, i) => {
     if (i % 7 === 3) caminho(a, ['faltou'])
-    else if (i % 7 === 5) cancelarAgendamento(base, recepcao, a.id, MOTIVOS_CANCELAMENTO[motivos++ % MOTIVOS_CANCELAMENTO.length], agora)
+    else if (i % 7 === 5) cancelarAgendamento(base, recepcao, a.id, MOTIVOS_CANCELAMENTO[motivos++ % MOTIVOS_CANCELAMENTO.length], a.versao, agora)
     else caminho(a, ['confirmado', 'chegou', 'em_atendimento', 'concluido'])
   })
   emAndamento.forEach(a => caminho(a, ['confirmado', 'chegou', 'em_atendimento']))
@@ -225,22 +241,59 @@ export function gerarBaseDemo(agora = new Date()): BaseDemo {
   const futurosDeOutrosDias = futuro.filter(a => a.data !== hoje)
   // Cancelamentos futuros liberam horários na agenda.
   const aCancelar = [futurosDeOutrosDias[2], futurosDeOutrosDias[9], futurosDeOutrosDias[16]].filter(Boolean)
-  aCancelar.forEach(a => cancelarAgendamento(base, recepcao, a.id, MOTIVOS_CANCELAMENTO[motivos++ % MOTIVOS_CANCELAMENTO.length], agora))
+  aCancelar.forEach(a => cancelarAgendamento(base, recepcao, a.id, MOTIVOS_CANCELAMENTO[motivos++ % MOTIVOS_CANCELAMENTO.length], a.versao, agora))
   // Reagendamentos com histórico: o novo horário é escolhido entre os livres do mesmo profissional.
   for (const a of [futurosDeOutrosDias[5], futurosDeOutrosDias[12]].filter(Boolean)) {
     for (const dias of [1, 2, 3]) {
       const data = proximoDia(a.profissionalId, somarDias(a.data, dias))
-      const lista = livres(a.profissionalId, data, a.duracaoMinutos, a.id)
+      const lista = livres(a.profissionalId, data, a.duracaoMinutos, a.preparacaoMinutos, a.id)
       if (!lista.length) continue
-      reagendarAgendamento(base, recepcao, a.id, { data, hora: deMinutos(lista[Math.floor(lista.length / 2)]), profissionalId: a.profissionalId, motivo: 'Cliente pediu outro horário (exemplo).' }, agora)
+      recepcaoCom(a, 'confirmacao')
+      reagendarAgendamento(base, recepcao, a.id, { data, hora: deMinutos(lista[Math.floor(lista.length / 2)]), profissionalId: a.profissionalId, motivo: 'Cliente pediu outro horário (exemplo).' }, a.versao, agora)
       break
     }
   }
   futuro.filter(a => a.status === 'agendado').forEach(a => {
     const minutosParaComecar = (inicioMs(a) - agoraMs) / 60000
     if (a.data === hoje && minutosParaComecar <= 30) caminho(a, ['confirmado', 'chegou'])
-    else if (sorte.numero() < 0.55) caminho(a, ['confirmado'])
+    else if (sorte.numero() < 0.55) { recepcaoCom(a, 'confirmacao'); caminho(a, ['confirmado']) }
+    // Algumas mensagens enviadas ainda sem resposta: mensagem enviada não é presença confirmada.
+    else if (sorte.numero() < 0.4) recepcaoCom(a, 'confirmacao')
   })
+
+  // Lista de espera de exemplo (não reserva horários).
+  const esperar = (id: string, cliente: number, servicoN: number, profissionalId: string | null, dias: number, faixa: [string, string] | null, observacao: string) => {
+    try {
+      criarEntradaEspera(base, recepcao, { id, clienteId: base.clientes[cliente].id, servicoId: servico(servicoN), profissionalId, dataInicio: hoje, dataFim: somarDias(hoje, dias),
+        horaInicio: faixa?.[0] ?? null, horaFim: faixa?.[1] ?? null, observacao }, agora)
+    } catch { /* exemplo dispensável */ }
+  }
+  // Marcação de exemplo com dois serviços em sequência (corte com Eduarda e design com Camila) e uma série semanal.
+  for (let dias = 2; dias <= 7; dias++) {
+    const data = somarDias(hoje, dias)
+    const corte = horariosLivres(base, { servicoId: servico(6), profissionalId: EDUARDA, data }, agora)
+    const encaixe = corte.find(h => horariosLivres(base, { servicoId: servico(9), profissionalId: CAMILA, data }, agora).includes(somarMinutos(h, 60)))
+    if (!encaixe) continue
+    try {
+      criarMarcacao(base, recepcao, { id: 'demo-grupo-1', clienteId: base.clientes[22].id, observacao: '', etapas: [
+        { servicoId: servico(6), profissionalId: EDUARDA, data, hora: encaixe },
+        { servicoId: servico(9), profissionalId: CAMILA, data, hora: somarMinutos(encaixe, 60) },
+      ] }, agora)
+      break
+    } catch { /* exemplo dispensável */ }
+  }
+  try {
+    // Dia útil (às 17h o Gabriel atende de segunda a sexta).
+    let inicioSerie = somarDias(hoje, 3)
+    while (diaDaSemana(inicioSerie) === 0 || diaDaSemana(inicioSerie) === 6) inicioSerie = somarDias(inicioSerie, 1)
+    const serie = { clienteId: base.clientes[16].id, servicoId: servico(17), profissionalId: GABRIEL, dataInicial: inicioSerie, hora: '17:00', frequencia: 'semanal' as const, quantidade: 6, dataFinal: null, diaInexistente: null }
+    const datas = preverSerie(base, recepcao, serie, agora).filter(p => p.situacao === 'disponivel').map(p => p.data)
+    if (datas.length) criarSerie(base, recepcao, 'demo-serie-1', serie, datas, 'Pacote de drenagem (exemplo).', agora)
+  } catch { /* exemplo dispensável */ }
+
+  esperar('demo-esp-1', 3, 9, null, 14, ['09:00', '12:00'], 'Prefere manhã (exemplo).')
+  esperar('demo-esp-2', 6, 14, CAMILA, 10, null, 'Aceita encaixe com aviso no mesmo dia (exemplo).')
+  esperar('demo-esp-3', 11, 6, null, 21, ['13:00', '18:00'], 'Somente à tarde (exemplo).')
 
   return base
 }

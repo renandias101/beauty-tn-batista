@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { CalendarDays, History, KeyRound, LogOut, Menu, Scissors, Settings, UserRound, Users, X, type LucideIcon } from 'lucide-react'
+import { Armchair, CalendarDays, History, KeyRound, ListTodo, LogOut, Menu, Scissors, Settings, UserRound, Users, X, type LucideIcon } from 'lucide-react'
 import { usePerfil, useSessao } from '../auth/Sessao'
 import { BarraDemo } from '../demo/BarraDemo'
 import { modoDemo } from '../lib/modoDemo'
@@ -7,14 +7,16 @@ import { agoraNoFuso, dataCompleta } from '../lib/datas'
 import { pode, type Permissao } from '../lib/permissoes'
 import type { Papel } from '../types'
 
-export type Rota = 'agenda' | 'clientes' | 'profissionais' | 'servicos' | 'usuarios' | 'auditoria' | 'configuracoes'
+export type Rota = 'agenda' | 'espera' | 'clientes' | 'profissionais' | 'servicos' | 'recursos' | 'usuarios' | 'auditoria' | 'configuracoes'
 
 // Sem permissão definida, o item vale para todos os perfis internos (a agenda: cada um vê o que o banco libera).
 const MENU: { rota: Rota; rotulo: string; icone: LucideIcon; permissao?: Permissao }[] = [
   { rota: 'agenda', rotulo: 'Agenda', icone: CalendarDays },
+  { rota: 'espera', rotulo: 'Lista de espera', icone: ListTodo, permissao: 'gerenciarListaEspera' },
   { rota: 'clientes', rotulo: 'Clientes', icone: Users, permissao: 'gerenciarClientes' },
   { rota: 'profissionais', rotulo: 'Profissionais', icone: UserRound, permissao: 'gerenciarCadastros' },
   { rota: 'servicos', rotulo: 'Serviços', icone: Scissors, permissao: 'gerenciarCadastros' },
+  { rota: 'recursos', rotulo: 'Recursos', icone: Armchair, permissao: 'gerenciarCadastros' },
   { rota: 'usuarios', rotulo: 'Usuários', icone: KeyRound, permissao: 'gerenciarUsuarios' },
   { rota: 'auditoria', rotulo: 'Auditoria', icone: History, permissao: 'verAuditoria' },
   { rota: 'configuracoes', rotulo: 'Configurações', icone: Settings, permissao: 'configurarClinica' },

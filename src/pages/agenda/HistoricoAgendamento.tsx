@@ -11,6 +11,7 @@ const ACOES: Record<RegistroHistorico['acao'], string> = {
   reagendado: 'Reagendado',
   cancelado: 'Cancelado',
   editado: 'Observação ou encaixe alterados',
+  status_corrigido: 'Status corrigido pela administração',
 }
 
 type Retrato = { status?: StatusAgendamento; data?: string; hora_inicio?: string; hora_fim?: string; profissional?: string; duracao_minutos?: number; observacao?: string | null; encaixe?: boolean }
@@ -22,7 +23,7 @@ const resumo = (registro: RegistroHistorico) => {
   const depois = (registro.valoresNovos ?? {}) as Retrato
   if (registro.acao === 'criado') return quando(depois)
   if (registro.acao === 'reagendado') return `De ${quando(antes)} para ${quando(depois)}`
-  if (registro.acao === 'status_alterado' && antes.status && depois.status) return `${STATUS[antes.status].rotulo} → ${STATUS[depois.status].rotulo}`
+  if ((registro.acao === 'status_alterado' || registro.acao === 'status_corrigido') && antes.status && depois.status) return `${STATUS[antes.status].rotulo} → ${STATUS[depois.status].rotulo}`
   if (registro.acao === 'editado') return `Encaixe: ${depois.encaixe ? 'sim' : 'não'}${depois.observacao ? ` · Observação: ${depois.observacao}` : ''}`
   return ''
 }

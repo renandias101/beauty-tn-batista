@@ -38,3 +38,11 @@ export async function horariosDisponiveis(servicoId: string, profissionalId: str
   if (error) throw error
   return (data as { dia: string; horario: string }[]).map(h => ({ data: h.dia, hora: h.horario }))
 }
+
+/** Duração do atendimento com a profissional escolhida (específica ou padrão), sem a preparação interna. */
+export async function duracaoPublica(servicoId: string, profissionalId: string): Promise<number | null> {
+  if (modoDemo) return demo.duracaoPublica(servicoId, profissionalId)
+  const { data, error } = await supabase.rpc('duracao_publica', { p_servico_id: servicoId, p_profissional_id: profissionalId })
+  if (error) throw error
+  return data as number | null
+}

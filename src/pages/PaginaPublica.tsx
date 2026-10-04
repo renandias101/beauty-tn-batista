@@ -7,9 +7,9 @@ import { mensagemDeErro } from '../lib/erros'
 import { modoDemo } from '../lib/modoDemo'
 import { linkWhatsApp } from '../lib/telefone'
 import { useCarregar } from '../lib/useCarregar'
-import { configuracaoPublica, horariosDisponiveis, profissionaisPublicos, servicosPublicos, type HorarioDisponivel, type ServicoPublico } from '../services/publico'
+import { configuracaoPublica, duracaoPublica, horariosDisponiveis, profissionaisPublicos, servicosPublicos, type HorarioDisponivel, type ServicoPublico } from '../services/publico'
 
-export const AVISO_DISPONIBILIDADE = 'A disponibilidade pode mudar. Seu horário será reservado após confirmação da equipe.'
+export const AVISO_DISPONIBILIDADE = 'A disponibilidade pode mudar. A solicitação pelo WhatsApp não garante a vaga: o horário só fica reservado depois que a equipe registrar o agendamento e confirmar com você.'
 export const SEM_PROFISSIONAIS = 'Não há profissionais disponíveis para este serviço. Entre em contato com a clínica.'
 
 export const mensagemWhatsApp = (servico: string, profissional: string, data: string, hora: string) =>
@@ -40,8 +40,11 @@ export function PaginaPublica() {
     return horariosDisponiveis(servicoId, profissionalId, hoje, somarDias(hoje, horizonte))
   }, [servicoId, profissionalId, horizonte, fuso], { aoFocar: true, limparAoMudar: true })
 
+  // Duração com a profissional escolhida (pode ser diferente da padrão do serviço). Não inclui a preparação interna.
+  const duracao = useCarregar(() => servicoId && profissionalId ? duracaoPublica(servicoId, profissionalId) : Promise.resolve(null), [servicoId, profissionalId], { limparAoMudar: true })
   const servico = servicos.dados?.find(s => s.id === servicoId)
   const profissional = profissionais.dados?.find(p => p.id === profissionalId)
+  const duracaoMinutos = duracao.dados ?? servico?.duracaoMinutos
   const porData = useMemo(() => {
     const mapa = new Map<string, string[]>()
     for (const h of horarios.dados ?? []) mapa.set(h.data, [...(mapa.get(h.data) ?? []), h.hora])
@@ -105,7 +108,7 @@ export function PaginaPublica() {
       <main className="animar-pagina mx-auto max-w-3xl space-y-5 p-4 sm:p-6">
         <div>
           <h1 className="titulo text-2xl sm:text-3xl">Horários disponíveis</h1>
-          <p className="mt-2 text-sm text-muted-foreground">Escolha o serviço, a profissional, a data e o horário. A solicitação é enviada pelo WhatsApp da clínica.</p>
+          <p className="mt-2 text-sm text-muted-foreground">Escolha o serviço, a profissional, a data e o horário. A solicitação é enviada pelo WhatsApp da clínica, e a equipe confirma a reserva.</p>
           <p role="note" className="alerta-info mt-4">{AVISO_DISPONIBILIDADE}</p>
         </div>
 
@@ -133,7 +136,7 @@ export function PaginaPublica() {
         </Etapa>
 
         {servicoId && (
-          <Etapa numero={2} titulo="Profissional" resumo={profissional?.nome} acao={profissional && <button type="button" onClick={() => escolherProfissional('')} className="botao botao-texto botao-pequeno">Alterar</button>}>
+          <Etapa numero={2} titulo="Profissional" resumo={profissional ? `${profissional.nome}${duracao.dados && duracao.dados !== servico?.duracaoMinutos ? ` · ${duracao.dados} min` : ''}` : undefined} acao={profissional && <button type="button" onClick={() => escolherProfissional('')} className="botao botao-texto botao-pequeno">Alterar</button>}>
             {profissionais.erro ? <FalhaCarregamento mensagem={`Não foi possível carregar as profissionais. ${profissionais.erro}`} onTentar={profissionais.recarregar} />
               : !profissionais.dados ? <Carregando texto="Carregando profissionais..." />
               : !profissionais.dados.length ? <p className="alerta-aviso">{SEM_PROFISSIONAIS}</p>
@@ -174,11 +177,12 @@ export function PaginaPublica() {
           <section className="cartao space-y-4 p-5">
             <h2 className="titulo text-xl">Resumo da solicitação</h2>
             <dl className="grid gap-3 text-sm sm:grid-cols-2">
-              <Item rotulo="Serviço">{servico.nome} ({servico.duracaoMinutos} min)</Item>
+              <Item rotulo="Serviço">{servico.nome} ({duracaoMinutos} min)</Item>
               <Item rotulo="Profissional">{profissional.nome}</Item>
               <Item rotulo="Data">{primeiraMaiuscula(dataPorExtenso(data))}</Item>
               <Item rotulo="Horário">{hora}</Item>
             </dl>
+            <p className="text-sm text-muted-foreground">Ao tocar no botão, abrimos o WhatsApp com a mensagem pronta. A reserva só existe depois que a equipe responder confirmando.</p>
             <p className="alerta-info">{AVISO_DISPONIBILIDADE}</p>
             <button type="button" onClick={solicitar} disabled={verificando || !config.dados?.whatsapp} className="botao botao-primario w-full sm:w-auto">
               {verificando ? <Loader2 size={16} className="animate-spin" /> : <MessageCircle size={16} />}Solicitar pelo WhatsApp

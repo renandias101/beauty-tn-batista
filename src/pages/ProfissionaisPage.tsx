@@ -8,7 +8,7 @@ import { NOMES_DIAS, agoraNoFuso, dataCurta } from '../lib/datas'
 import { mensagemDeErro } from '../lib/erros'
 import { formatarTelefone } from '../lib/telefone'
 import { useCarregar } from '../lib/useCarregar'
-import { definirHabilitacoes, listarHabilitacoes, listarProfissionais, listarServicos, salvarProfissional } from '../services/cadastros'
+import { definirDuracaoProfissional, definirHabilitacoes, listarHabilitacoes, listarProfissionais, listarServicos, salvarProfissional } from '../services/cadastros'
 import { criarExcecao, listarDisponibilidades, listarExcecoes, removerExcecao, salvarJornada } from '../services/jornada'
 import type { FaixaJornada, Habilitacao, Profissional, Servico } from '../types'
 
@@ -130,13 +130,20 @@ function ServicosHabilitados({ profissional, servicos, habilitacoes, onSalvo }: 
   const avisar = useAvisos()
   const atuais = habilitacoes.filter(h => h.profissionalId === profissional.id)
   const [marcados, setMarcados] = useState(() => new Set(atuais.map(h => h.servicoId)))
+  // Duração específica por serviço ('' = usa a duração padrão do serviço).
+  const duracaoAtual = (servicoId: string) => String(atuais.find(h => h.servicoId === servicoId)?.duracaoMinutos ?? '')
+  const [duracoes, setDuracoes] = useState<Record<string, string>>(() => Object.fromEntries(atuais.map(h => [h.servicoId, String(h.duracaoMinutos ?? '')])))
   const [salvando, setSalvando] = useState(false)
-  const alterado = marcados.size !== atuais.length || atuais.some(h => !marcados.has(h.servicoId))
+  const duracoesAlteradas = [...marcados].filter(id => (duracoes[id] ?? '') !== duracaoAtual(id))
+  const alterado = marcados.size !== atuais.length || atuais.some(h => !marcados.has(h.servicoId)) || duracoesAlteradas.length > 0
 
   const salvar = async () => {
+    const invalida = duracoesAlteradas.find(id => duracoes[id] && (!Number.isInteger(Number(duracoes[id])) || Number(duracoes[id]) <= 0 || Number(duracoes[id]) > 720))
+    if (invalida) { avisar('A duração específica deve ser um número inteiro de 1 a 720 minutos, ou ficar em branco.', 'erro'); return }
     setSalvando(true)
     try {
       await definirHabilitacoes(atuais, [...marcados].map(servicoId => ({ profissionalId: profissional.id, servicoId })))
+      for (const servicoId of duracoesAlteradas) await definirDuracaoProfissional(profissional.id, servicoId, duracoes[servicoId] ? Number(duracoes[servicoId]) : null)
       avisar('Serviços habilitados atualizados.')
       onSalvo()
     } catch (falha) {
@@ -149,17 +156,26 @@ function ServicosHabilitados({ profissional, servicos, habilitacoes, onSalvo }: 
   return (
     <section className="cartao p-5">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div><h3 className="titulo text-lg">Serviços habilitados</h3><p className="text-sm text-muted-foreground">Somente serviços marcados podem ser agendados com este profissional.</p></div>
+        <div><h3 className="titulo text-lg">Serviços habilitados</h3><p className="text-sm text-muted-foreground">Somente serviços marcados podem ser agendados com este profissional. A duração específica é opcional; em branco vale a padrão do serviço. Reservas existentes não mudam.</p></div>
         <button type="button" onClick={salvar} disabled={!alterado || salvando} className="botao botao-primario botao-pequeno">{salvando && <Loader2 size={14} className="animate-spin" />}Salvar serviços</button>
       </div>
       {servicos.length === 0 ? <Vazio>Cadastre serviços na tela Serviços.</Vazio> : (
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
           {servicos.map(s => (
-            <label key={s.id} className={`flex items-center gap-2 rounded-lg border border-border p-3 text-sm ${s.ativo ? '' : 'opacity-60'}`}>
-              <input type="checkbox" className="h-4 w-4" checked={marcados.has(s.id)}
-                onChange={e => setMarcados(atual => { const novo = new Set(atual); if (e.target.checked) novo.add(s.id); else novo.delete(s.id); return novo })} />
-              <span>{s.nome} <span className="text-muted-foreground">· {s.duracaoMinutos} min{s.ativo ? '' : ' · inativo'}</span></span>
-            </label>
+            <div key={s.id} className={`rounded-lg border border-border p-3 text-sm ${s.ativo ? '' : 'opacity-60'}`}>
+              <label className="flex items-center gap-2">
+                <input type="checkbox" className="h-4 w-4" checked={marcados.has(s.id)}
+                  onChange={e => setMarcados(atual => { const novo = new Set(atual); if (e.target.checked) novo.add(s.id); else novo.delete(s.id); return novo })} />
+                <span>{s.nome} <span className="text-muted-foreground">· {s.duracaoMinutos} min{s.ativo ? '' : ' · inativo'}</span></span>
+              </label>
+              {marcados.has(s.id) && (
+                <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">Duração com {profissional.nome.split(' ')[0]}
+                  <input type="number" min={1} max={720} inputMode="numeric" aria-label={`Duração específica de ${s.nome}`} placeholder={`${s.duracaoMinutos} (padrão)`}
+                    className="campo !mt-0 !min-h-8 w-28 py-1 text-sm" value={duracoes[s.id] ?? ''} onChange={e => setDuracoes(atual => ({ ...atual, [s.id]: e.target.value }))} />
+                  min
+                </label>
+              )}
+            </div>
           ))}
         </div>
       )}

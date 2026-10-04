@@ -2,12 +2,14 @@
 // do navegador (sessão do Supabase ou dados do sistema antigo).
 import type { Perfil } from '../types'
 import { gerarBaseDemo } from './dadosIniciais'
-import { FUSO_DEMO, type BaseDemo } from './motor'
+import { FUSO_DEMO, normalizarBase, type BaseDemo } from './motor'
 
 export const CHAVE_DADOS_DEMO = 'beauty-tn-batista:demo:v1'
 export const CHAVE_PERFIL_DEMO = 'beauty-tn-batista:demo:v1:perfil'
 
 let base: BaseDemo | null = null
+// Último conteúdo lido ou gravado: se outra aba gravar, a próxima leitura usa os dados dela (sem sobrescrever).
+let ultimoTexto: string | null = null
 
 const ler = (armazenamento: Storage | undefined, chave: string) => { try { return armazenamento?.getItem(chave) ?? null } catch { return null } }
 const escrever = (armazenamento: Storage | undefined, chave: string, valor: string | null) => {
@@ -21,12 +23,13 @@ const valida = (dados: unknown): dados is BaseDemo =>
 
 /** Carrega os exemplos uma única vez: se já existem no navegador, são reaproveitados sem recriar nem duplicar. */
 export function obterBase(): BaseDemo {
-  if (base) return base
   const salvo = ler(local(), CHAVE_DADOS_DEMO)
+  if (base && (salvo === null || salvo === ultimoTexto)) return base
   if (salvo) {
     try {
       const dados = JSON.parse(salvo)
-      if (valida(dados)) return (base = dados)
+      // Dados gravados por versões anteriores da demonstração recebem os campos novos com valores padrão.
+      if (valida(dados)) { ultimoTexto = salvo; return (base = normalizarBase(dados)) }
     } catch { /* conteúdo ilegível da própria demonstração: gera de novo abaixo */ }
   }
   base = gerarBaseDemo()
@@ -35,7 +38,9 @@ export function obterBase(): BaseDemo {
 }
 
 export function gravar() {
-  if (base) escrever(local(), CHAVE_DADOS_DEMO, JSON.stringify(base))
+  if (!base) return
+  ultimoTexto = JSON.stringify(base)
+  escrever(local(), CHAVE_DADOS_DEMO, ultimoTexto)
 }
 
 /** Recria somente os dados fictícios (com datas a partir de hoje). Nenhuma outra chave é tocada. */

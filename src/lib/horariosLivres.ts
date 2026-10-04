@@ -16,28 +16,33 @@ export const bloqueioNaData = (bloqueio: { inicio: string; fim: string }, data: 
 }
 
 /**
- * Horários em que o serviço inteiro cabe (RN03), encaixados um após o outro pela duração do serviço
- * a partir do início de cada faixa de trabalho. Ao encontrar uma ocupação (bloqueio ou reserva), a
- * contagem recomeça no fim dela. Assim a agenda mostra quantos atendimentos cabem (decisão de 04/10/2026).
- * Espelha public.horarios_disponiveis no banco; o servidor repete a validação ao salvar (RN09).
+ * Horários em que o atendimento e a preparação cabem inteiros (RN03), encaixados um após o outro com passo
+ * igual a atendimento + preparação, a partir do início de cada faixa de trabalho. Ao encontrar uma ocupação
+ * (bloqueio, reserva ou recurso sem capacidade), a contagem recomeça no fim dela.
+ * Espelha private.calcular_horarios no banco; o servidor repete a validação ao salvar (RN09).
  */
 export const calcularHorariosLivres = (opcoes: {
   faixas: { horaInicio: string; horaFim: string }[]
   ocupados: IntervaloMinutos[]
   duracaoMinutos: number
+  preparacaoMinutos?: number
   aPartirDeMinutos?: number
+  /** Retorna o fim da ocupação de um recurso no trecho, ou null se o recurso tiver capacidade. */
+  recursoOcupadoAte?: (inicio: number, fim: number) => number | null
 }) => {
-  const { faixas, ocupados, duracaoMinutos, aPartirDeMinutos = 0 } = opcoes
+  const { faixas, ocupados, duracaoMinutos, preparacaoMinutos = 0, aPartirDeMinutos = 0, recursoOcupadoAte } = opcoes
   if (duracaoMinutos <= 0) return []
+  const passo = duracaoMinutos + preparacaoMinutos
   const livres = new Set<number>()
   for (const faixa of faixas) {
     const fimFaixa = faixa.horaFim === '24:00' ? MINUTOS_DIA : paraMinutos(faixa.horaFim)
     let cursor = paraMinutos(faixa.horaInicio)
-    while (cursor + duracaoMinutos <= fimFaixa) {
-      const fim = cursor + duracaoMinutos
+    while (cursor + passo <= fimFaixa) {
+      const fim = cursor + passo
       const conflitos = ocupados.filter(o => cursor < o.fim && fim > o.inicio)
-      if (conflitos.length) {
-        cursor = Math.max(...conflitos.map(o => o.fim))
+      const ocupadoAte = conflitos.length ? Math.max(...conflitos.map(o => o.fim)) : recursoOcupadoAte?.(cursor, fim) ?? null
+      if (ocupadoAte !== null) {
+        cursor = Math.max(ocupadoAte, cursor + 1)
         continue
       }
       if (cursor >= aPartirDeMinutos) livres.add(cursor)

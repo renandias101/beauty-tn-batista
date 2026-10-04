@@ -1,5 +1,6 @@
-import { Ban, Clock3 } from 'lucide-react'
+import { Ban, Clock3, Layers, MessageCircle, Repeat } from 'lucide-react'
 import { SeloStatus, Vazio } from '../../components/Basicos'
+import { TIPOS_COMUNICACAO } from '../../lib/mensagens'
 import { dataCompleta, diaMes, gradeDoMes, instanteNoFuso, nomeDoDia, primeiraMaiuscula, somarDias } from '../../lib/datas'
 import type { Bloqueio, ItemAgenda, Profissional } from '../../types'
 
@@ -11,25 +12,45 @@ function CartaoAgendamento({ item, onAbrir, compacto }: { item: ItemAgenda; onAb
       {compacto ? (
         <>
           <div className={`text-xs font-bold ${item.status === 'cancelado' ? 'line-through' : ''}`}>{item.horaInicio} · {item.clienteNome}</div>
-          <div className="mt-0.5 truncate text-xs text-muted-foreground">{item.servicoNome}</div>
+          <div className="mt-0.5 truncate text-xs text-muted-foreground">{item.servicoNome}{item.grupoId ? ` · ${item.grupoOrdem}/${item.grupoTotal}` : item.serieId ? ' · série' : ''}</div>
         </>
       ) : (
         <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <div className={`text-base font-bold ${item.status === 'cancelado' ? 'line-through' : ''}`}>{item.clienteNome}</div>
             <div className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground"><Clock3 size={14} />{item.horaInicio} – {item.horaFim} · {item.servicoNome}</div>
-            <div className="mt-1 text-sm font-semibold text-muted-foreground">{item.profissionalNome}{item.encaixe ? ' · Encaixe' : ''}</div>
+            <div className="mt-1 text-sm font-semibold text-muted-foreground">{item.profissionalNome}{item.encaixe ? ' · Encaixe' : ''}{item.recursos ? ` · ${item.recursos}` : ''}</div>
+            {item.preparacaoMinutos > 0 && <div className="mt-1 text-xs text-muted-foreground">Preparação até {item.horaOcupadoAte}</div>}
+            <SeloVinculo item={item} />
           </div>
-          <SeloStatus status={item.status} />
+          <div className="flex flex-col items-start gap-1.5 sm:items-end">
+            <SeloStatus status={item.status} />
+            <SeloMensagem item={item} />
+          </div>
         </div>
       )}
     </button>
   )
 }
 
+/** Marcação com vários serviços ou série recorrente. */
+function SeloVinculo({ item }: { item: ItemAgenda }) {
+  if (item.grupoId) return <span className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-primary"><Layers size={12} />Serviço {item.grupoOrdem} de {item.grupoTotal} da marcação</span>
+  if (item.serieId) return <span className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-primary"><Repeat size={12} />Série · ocorrência nº {item.serieOrdem}</span>
+  return null
+}
+
+/** Situação da mensagem (separada do status): só para a equipe e reservas que ainda aguardam o atendimento. */
+function SeloMensagem({ item }: { item: ItemAgenda }) {
+  if (!item.clienteTelefone || (item.status !== 'agendado' && item.status !== 'confirmado')) return null
+  const texto = item.comunicacaoDesatualizada ? 'Avisar novo horário' : item.ultimaComunicacao ? `Mensagem: ${TIPOS_COMUNICACAO[item.ultimaComunicacao.tipo].toLowerCase()}` : 'Sem mensagem enviada'
+  const classes = item.comunicacaoDesatualizada ? 'text-warning' : item.ultimaComunicacao ? 'text-success' : 'text-muted-foreground'
+  return <span className={`inline-flex items-center gap-1 text-xs font-semibold ${classes}`}><MessageCircle size={12} />{texto}</span>
+}
+
 /** Visão diária: atendimentos agrupados por horário de início, em lista (legível no celular). */
-export function VisaoDia({ itens, bloqueios, profissionais, data, fuso, onAbrir }: {
-  itens: ItemAgenda[]; bloqueios: Bloqueio[]; profissionais: Profissional[]; data: string; fuso: string; onAbrir: (item: ItemAgenda) => void
+export function VisaoDia({ itens, bloqueios, profissionais, data, fuso, onAbrir, vazio }: {
+  itens: ItemAgenda[]; bloqueios: Bloqueio[]; profissionais: Profissional[]; data: string; fuso: string; onAbrir: (item: ItemAgenda) => void; vazio?: string
 }) {
   const grupos = new Map<string, ItemAgenda[]>()
   for (const item of itens) grupos.set(item.horaInicio, [...(grupos.get(item.horaInicio) ?? []), item])
@@ -52,7 +73,7 @@ export function VisaoDia({ itens, bloqueios, profissionais, data, fuso, onAbrir 
         </div>
       )}
       <div className="cartao p-3 sm:p-4">
-        {grupos.size === 0 ? <Vazio>Nenhum atendimento em {dataCompleta(data)}.</Vazio> : (
+        {grupos.size === 0 ? <Vazio>{vazio ?? `Nenhum atendimento em ${dataCompleta(data)}.`}</Vazio> : (
           <div className="space-y-4">
             {[...grupos.entries()].map(([hora, lista]) => (
               <div key={hora} className="grid gap-2 sm:grid-cols-[4.5rem_1fr] sm:gap-4">

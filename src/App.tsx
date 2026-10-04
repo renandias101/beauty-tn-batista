@@ -10,9 +10,11 @@ import { AgendaPage } from './pages/agenda/AgendaPage'
 import { AuditoriaPage } from './pages/AuditoriaPage'
 import { ClientesPage } from './pages/ClientesPage'
 import { ConfiguracoesPage } from './pages/ConfiguracoesPage'
+import { ListaEsperaPage } from './pages/ListaEsperaPage'
 import { LoginPage } from './pages/LoginPage'
 import { PaginaPublica } from './pages/PaginaPublica'
 import { ProfissionaisPage } from './pages/ProfissionaisPage'
+import { RecursosPage } from './pages/RecursosPage'
 import { ServicosPage } from './pages/ServicosPage'
 import { UsuariosPage } from './pages/UsuariosPage'
 
@@ -65,9 +67,11 @@ function AreaLogada() {
   return (
     <Layout rota={rota} onNavegar={navegar}>
       {rota === 'agenda' && <AgendaPage />}
+      {rota === 'espera' && <ListaEsperaPage />}
       {rota === 'clientes' && <ClientesPage />}
       {rota === 'profissionais' && <ProfissionaisPage />}
       {rota === 'servicos' && <ServicosPage />}
+      {rota === 'recursos' && <RecursosPage />}
       {rota === 'usuarios' && <UsuariosPage />}
       {rota === 'auditoria' && <AuditoriaPage />}
       {rota === 'configuracoes' && <ConfiguracoesPage />}
