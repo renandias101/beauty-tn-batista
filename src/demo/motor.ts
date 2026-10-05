@@ -1,12 +1,12 @@
 // Regras da agenda aplicadas aos dados fictícios da demonstração.
-// Espelham as funções do banco (migrações 002, 004 e 011) para que a demonstração se comporte como o sistema real.
+// Espelham as funções do banco (migrações 002, 004, 011, 012 e 013) para que a demonstração se comporte como o sistema real.
 // Não são a fonte oficial das regras: no sistema real, quem valida é o servidor.
 import { agoraNoFuso, deMinutos, diaDaSemana, fimDoMes, paraMinutos, somarDias, somarMeses, somarMinutos } from '../lib/datas'
 import { ErroDeOperacao, type DicaDeErro } from '../lib/erros'
 import { bloqueioNaData, calcularHorariosLivres } from '../lib/horariosLivres'
 import { PROXIMOS_STATUS, STATUS, ocupaHorario, ocupaPeriodo } from '../lib/status'
 import type {
-  Bloqueio, CandidatoEspera, Cliente, Comunicacao, ContatoEspera, DiaInexistente, Disponibilidade, EntradaEspera, Excecao, FrequenciaSerie, Habilitacao, ItemAgenda, OcorrenciaPrevista, Papel, Perfil,
+  Bloqueio, CandidatoEspera, Cliente, Comunicacao, ContatoEspera, DiaInexistente, Disponibilidade, EntradaEspera, Excecao, FrequenciaSerie, Habilitacao, ItemAgenda, OcorrenciaPrevista, Papel, PedidoSenha, Perfil,
   Profissional, Recurso, RegistroHistorico, Servico, ServicoRecurso, StatusAgendamento, StatusEspera, TipoComunicacao,
 } from '../types'
 
@@ -15,6 +15,8 @@ export const FUSO_DEMO = 'America/Sao_Paulo'
 const DESLOCAMENTO = '-03:00'
 
 export interface UsuarioDemo { usuarioId: string; nome: string; usuario: string; papel: Papel; ativo: boolean }
+export type ResolucaoPedidoSenha = 'senha_redefinida' | 'descartado'
+export interface PedidoSenhaDemo { id: string; usuarioId: string; solicitadoEm: string; encerradoEm: string | null; encerradoPor: string | null; resolucao: ResolucaoPedidoSenha | null }
 export interface AgendamentoDemo {
   id: string; clienteId: string; servicoId: string; profissionalId: string
   data: string; horaInicio: string; duracaoMinutos: number; status: StatusAgendamento
@@ -60,6 +62,7 @@ export interface BaseDemo {
   contatosEspera: ContatoEsperaDemo[]
   grupos: GrupoDemo[]
   series: SerieDemo[]
+  pedidosSenha: PedidoSenhaDemo[]
 }
 
 /** Completa dados gravados por versões anteriores da demonstração (sem perder as alterações já feitas). */
@@ -71,6 +74,7 @@ export function normalizarBase(base: BaseDemo): BaseDemo {
   base.contatosEspera ??= []
   base.grupos ??= []
   base.series ??= []
+  base.pedidosSenha ??= []
   for (const s of base.servicos) s.preparacaoMinutos ??= 0
   for (const a of base.agendamentos) {
     a.preparacaoMinutos ??= 0
@@ -802,4 +806,41 @@ export function reagendarSerie(base: BaseDemo, perfil: Perfil | null, serieId: s
     }
   })
   return afetadas.length
+}
+
+// ---------- Pedidos de redefinição de senha (espelho das migrações 013 e 014) ----------
+
+const ESPERA_APOS_DESCARTE_MS = 30 * 60_000
+const RETENCAO_PEDIDOS_MS = 180 * 86_400_000
+
+/**
+ * Sem login: resposta sempre igual; contas desconhecidas ou desativadas não geram pedido; no máximo um em aberto por conta;
+ * depois de um descarte, a mesma conta só gera outro aviso após 30 minutos.
+ */
+export function solicitarRedefinicaoSenha(base: BaseDemo, login: string, agora = new Date()) {
+  const limpo = login.trim().toLowerCase()
+  if (!limpo || limpo.length > 254) return
+  const usuario = base.usuarios.find(u => u.ativo && u.usuario === limpo)
+  if (!usuario || base.pedidosSenha.some(p => p.usuarioId === usuario.usuarioId && !p.encerradoEm)) return
+  if (base.pedidosSenha.some(p => p.usuarioId === usuario.usuarioId && p.resolucao === 'descartado' && p.encerradoEm
+    && agora.getTime() - Date.parse(p.encerradoEm) < ESPERA_APOS_DESCARTE_MS)) return
+  base.pedidosSenha.push({ id: `demo-pedido-senha-${base.pedidosSenha.length + 1}`, usuarioId: usuario.usuarioId, solicitadoEm: agora.toISOString(), encerradoEm: null, encerradoPor: null, resolucao: null })
+}
+
+export function pedidosSenhaAbertos(base: BaseDemo, perfil: Perfil | null): PedidoSenha[] {
+  exigirPapel(perfil, ['admin'])
+  return base.pedidosSenha.filter(p => !p.encerradoEm).flatMap(p => {
+    const usuario = base.usuarios.find(u => u.usuarioId === p.usuarioId)
+    return usuario ? [{ usuarioId: p.usuarioId, nome: usuario.nome, usuario: usuario.usuario, ativo: usuario.ativo, solicitadoEm: p.solicitadoEm }] : []
+  }).sort((a, b) => a.solicitadoEm.localeCompare(b.solicitadoEm))
+}
+
+/** Depois de redefinir a senha ou ao descartar um pedido indevido. Sem pedido em aberto, não faz nada. Apaga encerrados há mais de 180 dias. */
+export function encerrarPedidoSenha(base: BaseDemo, perfil: Perfil | null, usuarioId: string, resolucao: ResolucaoPedidoSenha, agora = new Date()) {
+  const quem = exigirPapel(perfil, ['admin'])
+  if (resolucao !== 'senha_redefinida' && resolucao !== 'descartado') falhar('Resolução inválida.')
+  for (const p of base.pedidosSenha) {
+    if (p.usuarioId === usuarioId && !p.encerradoEm) Object.assign(p, { encerradoEm: agora.toISOString(), encerradoPor: quem.usuarioId, resolucao })
+  }
+  base.pedidosSenha = base.pedidosSenha.filter(p => !p.encerradoEm || agora.getTime() - Date.parse(p.encerradoEm) <= RETENCAO_PEDIDOS_MS)
 }

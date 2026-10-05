@@ -385,3 +385,8 @@ export async function atualizarUsuario(u: { usuarioId: string; nome: string; pap
 export async function redefinirSenha(_usuarioId: string, _senha: string) {
   motor.exigirPapel(perfilDemo(), ['admin'])
 }
+
+export const solicitarRedefinicaoSenha = async (usuario: string) => alterar(() => motor.solicitarRedefinicaoSenha(obterBase(), usuario))
+export const listarPedidosSenha = async () => motor.pedidosSenhaAbertos(obterBase(), perfilDemo())
+export const encerrarPedidoSenha = async (usuarioId: string, resolucao: motor.ResolucaoPedidoSenha) =>
+  alterar(() => motor.encerrarPedidoSenha(obterBase(), perfilDemo(), usuarioId, resolucao))

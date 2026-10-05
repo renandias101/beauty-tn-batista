@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Loader2, Plus, Search } from 'lucide-react'
+import { Armchair, Loader2, Plus, Search } from 'lucide-react'
 import { useAvisos } from '../components/Avisos'
 import { CabecalhoPagina, Carregando, FalhaCarregamento, Vazio } from '../components/Basicos'
 import { Modal } from '../components/Modal'
@@ -31,7 +31,10 @@ export function ServicosPage() {
   return (
     <div>
       <CabecalhoPagina sobretitulo="Catálogo" titulo="Serviços" descricao="Duração, preparação e recursos valem para novos agendamentos; reservas existentes mantêm o que foi gravado."
-        acoes={<button type="button" onClick={() => setEditando('novo')} className="botao botao-primario"><Plus size={18} />Novo serviço</button>} />
+        acoes={<>
+          <a href="#/recursos" className="botao botao-secundario"><Armchair size={18} />Recursos</a>
+          <button type="button" onClick={() => setEditando('novo')} className="botao botao-primario"><Plus size={18} />Novo serviço</button>
+        </>} />
       <div className="cartao overflow-hidden">
         <div className="border-b border-border p-4">
           <label className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 focus-within:border-primary">

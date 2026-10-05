@@ -52,7 +52,7 @@ export function AuditoriaPage() {
 
   return (
     <div>
-      <CabecalhoPagina sobretitulo="Administração" titulo="Auditoria" descricao="Quem alterou cadastros, jornadas, bloqueios, usuários e configurações, e quando. Registros somente para consulta."
+      <CabecalhoPagina sobretitulo="Administração" titulo="Relatório" descricao="Quem alterou cadastros, jornadas, bloqueios, usuários e configurações, e quando. Registros somente para consulta."
         acoes={<button type="button" onClick={auditoria.recarregar} className="botao botao-texto"><RefreshCw size={16} className={auditoria.carregando ? 'animate-spin' : ''} />Atualizar</button>} />
       <div className="cartao mb-4 p-3">
         <select aria-label="Filtrar por área" className="campo !mt-0 w-full sm:w-72" value={tabela} onChange={e => setTabela(e.target.value)}>
@@ -60,7 +60,7 @@ export function AuditoriaPage() {
           {Object.entries(TABELAS).map(([chave, rotulo]) => <option key={chave} value={chave}>{rotulo}</option>)}
         </select>
       </div>
-      {modoDemo && <p className="alerta-info mb-4">A demonstração não mantém auditoria geral de cadastros. O histórico de cada agendamento continua disponível na agenda.</p>}
+      {modoDemo && <p className="alerta-info mb-4">A demonstração não mantém o relatório de alterações dos cadastros. O histórico de cada agendamento continua disponível na agenda.</p>}
       {auditoria.erro ? <FalhaCarregamento mensagem={auditoria.erro} onTentar={auditoria.recarregar} />
         : !auditoria.dados ? <Carregando />
         : !auditoria.dados.length ? <Vazio>Nenhum registro encontrado.</Vazio>

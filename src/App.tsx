@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import { ProvedorSessao, usePerfil, useSessao } from './auth/Sessao'
 import { ProvedorAvisos } from './components/Avisos'
 import { Carregando } from './components/Basicos'
@@ -6,17 +6,20 @@ import { Layout, rotasPermitidas, type Rota } from './components/Layout'
 import { EntradaDemo } from './demo/EntradaDemo'
 import { modoDemo } from './lib/modoDemo'
 import { supabaseConfigurado } from './lib/supabase'
-import { AgendaPage } from './pages/agenda/AgendaPage'
-import { AuditoriaPage } from './pages/AuditoriaPage'
-import { ClientesPage } from './pages/ClientesPage'
-import { ConfiguracoesPage } from './pages/ConfiguracoesPage'
-import { ListaEsperaPage } from './pages/ListaEsperaPage'
 import { LoginPage } from './pages/LoginPage'
-import { PaginaPublica } from './pages/PaginaPublica'
-import { ProfissionaisPage } from './pages/ProfissionaisPage'
-import { RecursosPage } from './pages/RecursosPage'
-import { ServicosPage } from './pages/ServicosPage'
-import { UsuariosPage } from './pages/UsuariosPage'
+
+// Cada tela é baixada só quando aberta: o carregamento inicial fica menor (entrada e agenda primeiro).
+const DashboardPage = lazy(() => import('./pages/DashboardPage').then(m => ({ default: m.DashboardPage })))
+const AgendaPage = lazy(() => import('./pages/agenda/AgendaPage').then(m => ({ default: m.AgendaPage })))
+const AuditoriaPage = lazy(() => import('./pages/AuditoriaPage').then(m => ({ default: m.AuditoriaPage })))
+const ClientesPage = lazy(() => import('./pages/ClientesPage').then(m => ({ default: m.ClientesPage })))
+const ConfiguracoesPage = lazy(() => import('./pages/ConfiguracoesPage').then(m => ({ default: m.ConfiguracoesPage })))
+const ListaEsperaPage = lazy(() => import('./pages/ListaEsperaPage').then(m => ({ default: m.ListaEsperaPage })))
+const PaginaPublica = lazy(() => import('./pages/PaginaPublica').then(m => ({ default: m.PaginaPublica })))
+const ProfissionaisPage = lazy(() => import('./pages/ProfissionaisPage').then(m => ({ default: m.ProfissionaisPage })))
+const RecursosPage = lazy(() => import('./pages/RecursosPage').then(m => ({ default: m.RecursosPage })))
+const ServicosPage = lazy(() => import('./pages/ServicosPage').then(m => ({ default: m.ServicosPage })))
+const UsuariosPage = lazy(() => import('./pages/UsuariosPage').then(m => ({ default: m.UsuariosPage })))
 
 const ehPaginaPublica = () => window.location.hash.startsWith('#/horarios')
 
@@ -30,7 +33,7 @@ export default function App() {
 
   if (!supabaseConfigurado) return <AvisoTela titulo="Configuração ausente" texto="Defina VITE_SUPABASE_URL e VITE_SUPABASE_PUBLISHABLE_KEY no arquivo .env.local." />
   // A consulta pública não passa pela sessão: visitante não é usuário interno.
-  if (publica) return <ProvedorAvisos><PaginaPublica /></ProvedorAvisos>
+  if (publica) return <ProvedorAvisos><Suspense fallback={<Carregando />}><PaginaPublica /></Suspense></ProvedorAvisos>
   return (
     <ProvedorAvisos>
       <ProvedorSessao>
@@ -54,18 +57,22 @@ const rotaDoEndereco = () => window.location.hash.replace(/^#\/?/, '') as Rota
 function AreaLogada() {
   const perfil = usePerfil()
   const permitidas = useMemo(() => rotasPermitidas(perfil.papel), [perfil.papel])
-  const [rota, setRota] = useState<Rota>(() => permitidas.includes(rotaDoEndereco()) ? rotaDoEndereco() : 'agenda')
+  // Tela inicial: o Dashboard para a equipe; a própria agenda para o profissional.
+  const inicial = permitidas[0]
+  const [rota, setRota] = useState<Rota>(() => permitidas.includes(rotaDoEndereco()) ? rotaDoEndereco() : inicial)
 
   useEffect(() => {
-    const aoMudar = () => setRota(permitidas.includes(rotaDoEndereco()) ? rotaDoEndereco() : 'agenda')
+    const aoMudar = () => setRota(permitidas.includes(rotaDoEndereco()) ? rotaDoEndereco() : inicial)
     window.addEventListener('hashchange', aoMudar)
     return () => window.removeEventListener('hashchange', aoMudar)
-  }, [permitidas])
+  }, [permitidas, inicial])
 
   const navegar = (destino: Rota) => { window.location.hash = `/${destino}`; setRota(destino) }
 
   return (
     <Layout rota={rota} onNavegar={navegar}>
+      <Suspense fallback={<Carregando />}>
+      {rota === 'dashboard' && <DashboardPage />}
       {rota === 'agenda' && <AgendaPage />}
       {rota === 'espera' && <ListaEsperaPage />}
       {rota === 'clientes' && <ClientesPage />}
@@ -75,6 +82,7 @@ function AreaLogada() {
       {rota === 'usuarios' && <UsuariosPage />}
       {rota === 'auditoria' && <AuditoriaPage />}
       {rota === 'configuracoes' && <ConfiguracoesPage />}
+      </Suspense>
     </Layout>
   )
 }

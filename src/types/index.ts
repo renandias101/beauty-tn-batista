@@ -114,3 +114,5 @@ export interface CandidatoEspera {
 }
 
 export interface Usuario { usuarioId: string; nome: string; usuario: string; papel: Papel; ativo: boolean; profissionalId: string | null; profissionalNome: string | null; ultimoAcesso: string | null }
+/** Pedido de "Esqueci a senha" em aberto, aguardando a administração. */
+export interface PedidoSenha { usuarioId: string; nome: string; usuario: string; ativo: boolean; solicitadoEm: string }

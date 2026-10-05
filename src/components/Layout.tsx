@@ -1,28 +1,54 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Armchair, CalendarDays, History, KeyRound, ListTodo, LogOut, Menu, Scissors, Settings, UserRound, Users, X, type LucideIcon } from 'lucide-react'
+import { Bell, CalendarDays, LayoutDashboard, History, KeyRound, ListTodo, LogOut, Menu, Scissors, Settings, UserRound, Users, X, type LucideIcon } from 'lucide-react'
 import { usePerfil, useSessao } from '../auth/Sessao'
 import { BarraDemo } from '../demo/BarraDemo'
 import { modoDemo } from '../lib/modoDemo'
 import { agoraNoFuso, dataCompleta } from '../lib/datas'
 import { pode, type Permissao } from '../lib/permissoes'
+import { EVENTO_PEDIDOS_SENHA, listarPedidosSenha } from '../services/usuarios'
 import type { Papel } from '../types'
 
-export type Rota = 'agenda' | 'espera' | 'clientes' | 'profissionais' | 'servicos' | 'recursos' | 'usuarios' | 'auditoria' | 'configuracoes'
+export type Rota = 'dashboard' | 'agenda' | 'espera' | 'clientes' | 'profissionais' | 'servicos' | 'recursos' | 'usuarios' | 'auditoria' | 'configuracoes'
 
 // Sem permissão definida, o item vale para todos os perfis internos (a agenda: cada um vê o que o banco libera).
 const MENU: { rota: Rota; rotulo: string; icone: LucideIcon; permissao?: Permissao }[] = [
+  { rota: 'dashboard', rotulo: 'Dashboard', icone: LayoutDashboard, permissao: 'verAgendaGeral' },
   { rota: 'agenda', rotulo: 'Agenda', icone: CalendarDays },
   { rota: 'espera', rotulo: 'Lista de espera', icone: ListTodo, permissao: 'gerenciarListaEspera' },
   { rota: 'clientes', rotulo: 'Clientes', icone: Users, permissao: 'gerenciarClientes' },
-  { rota: 'profissionais', rotulo: 'Profissionais', icone: UserRound, permissao: 'gerenciarCadastros' },
+  { rota: 'profissionais', rotulo: 'Agenda profissionais', icone: UserRound, permissao: 'gerenciarCadastros' },
   { rota: 'servicos', rotulo: 'Serviços', icone: Scissors, permissao: 'gerenciarCadastros' },
-  { rota: 'recursos', rotulo: 'Recursos', icone: Armchair, permissao: 'gerenciarCadastros' },
   { rota: 'usuarios', rotulo: 'Usuários', icone: KeyRound, permissao: 'gerenciarUsuarios' },
-  { rota: 'auditoria', rotulo: 'Auditoria', icone: History, permissao: 'verAuditoria' },
+  { rota: 'auditoria', rotulo: 'Relatório', icone: History, permissao: 'verAuditoria' },
   { rota: 'configuracoes', rotulo: 'Configurações', icone: Settings, permissao: 'configurarClinica' },
 ]
 
-export const rotasPermitidas = (papel: Papel) => MENU.filter(item => !item.permissao || pode(papel, item.permissao)).map(item => item.rota)
+// Telas sem item no menu (pedido de 04/10/2026): Recursos é aberta pelo botão na tela Serviços.
+const SEM_MENU: { rota: Rota; permissao: Permissao; dentroDe: Rota }[] = [{ rota: 'recursos', permissao: 'gerenciarCadastros', dentroDe: 'servicos' }]
+
+export const rotasPermitidas = (papel: Papel) => [...MENU, ...SEM_MENU].filter(item => !item.permissao || pode(papel, item.permissao)).map(item => item.rota)
+
+/** Pedidos de "Esqueci a senha" em aberto, para avisar a administração (atualiza ao navegar, a cada minuto e ao voltar à janela). */
+function usePedidosSenhaPendentes(ativo: boolean, rota: Rota) {
+  const [quantidade, setQuantidade] = useState(0)
+  useEffect(() => {
+    if (!ativo) return
+    let vivo = true
+    // Falha na consulta só esconde o aviso; a página Usuários mostra o erro se a administração abrir.
+    const atualizar = () => { listarPedidosSenha().then(lista => { if (vivo) setQuantidade(lista.length) }, () => {}) }
+    atualizar()
+    const intervalo = window.setInterval(atualizar, 60_000)
+    window.addEventListener(EVENTO_PEDIDOS_SENHA, atualizar)
+    window.addEventListener('focus', atualizar)
+    return () => {
+      vivo = false
+      window.clearInterval(intervalo)
+      window.removeEventListener(EVENTO_PEDIDOS_SENHA, atualizar)
+      window.removeEventListener('focus', atualizar)
+    }
+  }, [ativo, rota])
+  return ativo ? quantidade : 0
+}
 
 const NOME_PAPEL: Record<Papel, string> = { admin: 'Administração', secretaria: 'Atendimento', profissional: 'Profissional' }
 
@@ -30,6 +56,8 @@ export function Layout({ rota, onNavegar, children }: { rota: Rota; onNavegar: (
   const perfil = usePerfil()
   const { sair } = useSessao()
   const [menuAberto, setMenuAberto] = useState(false)
+  const pedidosSenha = usePedidosSenhaPendentes(pode(perfil.papel, 'gerenciarUsuarios'), rota)
+  const textoPedidos = `${pedidosSenha} ${pedidosSenha === 1 ? 'pedido' : 'pedidos'} de nova senha`
   const hoje = agoraNoFuso(perfil.fusoHorario).data
   const iniciais = perfil.nome.split(' ').filter(Boolean).map(parte => parte[0]).slice(0, 2).join('').toUpperCase()
 
@@ -43,14 +71,17 @@ export function Layout({ rota, onNavegar, children }: { rota: Rota; onNavegar: (
       <a href="#conteudo" className="pular-conteudo">Pular para o conteúdo principal</a>
       <aside className={`fixed bottom-0 left-0 ${modoDemo ? 'top-9' : 'top-0'} z-40 flex w-64 flex-col border-r border-border bg-sidebar px-5 py-6 shadow-[8px_0_28px_rgb(51_42_34/.035)] transition-transform lg:translate-x-0 ${menuAberto ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="mb-8 flex items-start justify-between">
-          <button type="button" onClick={() => ir('agenda')} className="marca" aria-label="Ir para a agenda"><img src="/brand/clinica-beauty.svg" alt="Clínica Beauty" width="80" height="80" /></button>
+          <button type="button" onClick={() => ir(rotasPermitidas(perfil.papel)[0])} className="marca" aria-label="Ir para o início"><img src="/brand/clinica-beauty.svg" alt="Clínica Beauty" width="80" height="80" /></button>
           <button type="button" onClick={() => setMenuAberto(false)} className="botao botao-texto botao-pequeno lg:hidden" aria-label="Fechar menu"><X size={18} /></button>
         </div>
         <div className="mb-3 px-3 text-[.7rem] font-semibold uppercase tracking-[.18em] text-muted-foreground">Menu principal</div>
         <nav className="space-y-1" aria-label="Menu principal">
           {MENU.filter(item => !item.permissao || pode(perfil.papel, item.permissao)).map(item => (
-            <button key={item.rota} type="button" onClick={() => ir(item.rota)} aria-current={rota === item.rota ? 'page' : undefined} className="item-menu">
+            <button key={item.rota} type="button" onClick={() => ir(item.rota)} aria-current={rota === item.rota || SEM_MENU.some(s => s.rota === rota && s.dentroDe === item.rota) ? 'page' : undefined} className="item-menu">
               <item.icone size={18} strokeWidth={1.8} />{perfil.papel === 'profissional' && item.rota === 'agenda' ? 'Minha agenda' : item.rotulo}
+              {item.rota === 'usuarios' && pedidosSenha > 0 && (
+                <span className="ml-auto rounded-full bg-primary px-2 py-0.5 text-xs font-bold text-primary-foreground"><span aria-hidden="true">{pedidosSenha}</span><span className="sr-only">{textoPedidos}</span></span>
+              )}
             </button>
           ))}
         </nav>
@@ -73,9 +104,16 @@ export function Layout({ rota, onNavegar, children }: { rota: Rota; onNavegar: (
             <button type="button" onClick={() => setMenuAberto(true)} className="botao botao-texto botao-pequeno lg:hidden" aria-label="Abrir menu"><Menu size={22} /></button>
             <span className="hidden text-sm text-muted-foreground sm:inline">Olá, {perfil.nome.split(' ')[0]}</span>
           </div>
-          <div className="text-right">
-            <div className="text-sm font-bold">Hoje</div>
-            <div className="text-xs text-muted-foreground">{dataCompleta(hoje)}</div>
+          <div className="flex items-center gap-3 sm:gap-5">
+            {pedidosSenha > 0 && (
+              <button type="button" onClick={() => ir('usuarios')} className="botao botao-secundario botao-pequeno" title="Ver pedidos de redefinição de senha">
+                <Bell size={16} /><span className="sm:hidden" aria-hidden="true">{pedidosSenha}</span><span className="max-sm:sr-only">{textoPedidos}</span>
+              </button>
+            )}
+            <div className="text-right">
+              <div className="text-sm font-bold">Hoje</div>
+              <div className="text-xs text-muted-foreground">{dataCompleta(hoje)}</div>
+            </div>
           </div>
         </header>
         <main id="conteudo" className="animar-pagina mx-auto max-w-[1440px] p-4 sm:p-6 lg:p-10">{children}</main>

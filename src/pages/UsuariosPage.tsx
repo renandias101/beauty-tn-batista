@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Loader2, Plus } from 'lucide-react'
+import { Bell, Loader2, Plus } from 'lucide-react'
 import { usePerfil } from '../auth/Sessao'
 import { useAvisos } from '../components/Avisos'
 import { CabecalhoPagina, Carregando, FalhaCarregamento, Vazio } from '../components/Basicos'
@@ -9,8 +9,8 @@ import { dataCurta, instanteNoFuso } from '../lib/datas'
 import { mensagemDeErro } from '../lib/erros'
 import { useCarregar } from '../lib/useCarregar'
 import { listarProfissionais } from '../services/cadastros'
-import { atualizarUsuario, criarUsuario, listarUsuarios, redefinirSenha } from '../services/usuarios'
-import type { Papel, Profissional, Usuario } from '../types'
+import { atualizarUsuario, criarUsuario, encerrarPedidoSenha, listarPedidosSenha, listarUsuarios, redefinirSenha } from '../services/usuarios'
+import type { Papel, PedidoSenha, Profissional, Usuario } from '../types'
 
 const PAPEIS: { valor: Papel; rotulo: string; descricao: string }[] = [
   { valor: 'admin', rotulo: 'Administração', descricao: 'Todas as agendas, cadastros, jornadas, bloqueios, usuários e histórico.' },
@@ -23,16 +23,70 @@ export function UsuariosPage() {
   const perfil = usePerfil()
   const avisar = useAvisos()
   const dados = useCarregar(async () => {
-    const [usuarios, profissionais] = await Promise.all([listarUsuarios(), listarProfissionais()])
-    return { usuarios, profissionais }
+    // Falha nos pedidos de senha não impede a gestão dos usuários.
+    const [usuarios, profissionais, pedidos] = await Promise.all([listarUsuarios(), listarProfissionais(), listarPedidosSenha().catch(() => null)])
+    return { usuarios, profissionais, pedidos }
   }, [])
   const [editando, setEditando] = useState<Usuario | 'novo' | null>(null)
   const [senhaDe, setSenhaDe] = useState<Usuario | null>(null)
+  const [descartando, setDescartando] = useState<string | null>(null)
+
+  const senhaRedefinida = async (usuario: Usuario) => {
+    setSenhaDe(null)
+    try {
+      // Encerra o pedido em aberto da conta, se houver (redefinir sem pedido também é permitido).
+      await encerrarPedidoSenha(usuario.usuarioId, 'senha_redefinida')
+      avisar('Senha redefinida. Informe a nova senha à pessoa por um canal seguro.')
+    } catch {
+      avisar('Senha redefinida, mas o pedido continua em aberto. Use "Descartar" para encerrá-lo.', 'erro')
+    }
+    dados.recarregar()
+  }
+
+  const descartar = async (pedido: PedidoSenha) => {
+    setDescartando(pedido.usuarioId)
+    try {
+      await encerrarPedidoSenha(pedido.usuarioId, 'descartado')
+      avisar('Pedido descartado. A senha não foi alterada.')
+      dados.recarregar()
+    } catch (falha) {
+      avisar(mensagemDeErro(falha), 'erro')
+    } finally {
+      setDescartando(null)
+    }
+  }
 
   return (
     <div>
       <CabecalhoPagina sobretitulo="Acesso" titulo="Usuários" descricao="Cada pessoa tem login individual. Contas desativadas perdem o acesso, mas o histórico é preservado."
         acoes={<button type="button" onClick={() => setEditando('novo')} className="botao botao-primario"><Plus size={18} />Novo usuário</button>} />
+      {dados.dados && dados.dados.pedidos === null && <p role="alert" className="alerta-aviso mb-4">Não foi possível carregar os pedidos de nova senha. Recarregue a página para tentar de novo.</p>}
+      {dados.dados?.pedidos && dados.dados.pedidos.length > 0 && (
+        <section aria-labelledby="titulo-pedidos-senha" className="cartao mb-6 border-primary p-4 sm:p-5">
+          <h2 id="titulo-pedidos-senha" className="flex items-center gap-2 text-base font-bold"><Bell size={18} className="text-primary" />Pedidos de nova senha</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Feitos em "Esqueci a senha". Confirme que o pedido partiu da própria pessoa antes de criar a nova senha e entregue-a por um canal seguro.</p>
+          <div className="mt-3 divide-y divide-border">
+            {dados.dados.pedidos.map(pedido => {
+              const quando = instanteNoFuso(pedido.solicitadoEm, perfil.fusoHorario)
+              const usuario = dados.dados!.usuarios.find(u => u.usuarioId === pedido.usuarioId)
+              return (
+                <div key={pedido.usuarioId} className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold">{pedido.nome}</div>
+                    <div className="text-xs text-muted-foreground">Usuário: {pedido.usuario} · Pedido em {dataCurta(quando.data)} {quando.hora}{pedido.ativo ? '' : ' · Conta desativada'}</div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => descartar(pedido)} disabled={descartando === pedido.usuarioId} className="botao botao-texto botao-pequeno">
+                      {descartando === pedido.usuarioId && <Loader2 size={14} className="animate-spin" />}Descartar
+                    </button>
+                    {usuario && <button type="button" onClick={() => setSenhaDe(usuario)} className="botao botao-primario botao-pequeno">Redefinir senha</button>}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      )}
       {dados.erro ? <FalhaCarregamento mensagem={dados.erro} onTentar={dados.recarregar} /> : !dados.dados ? <Carregando /> : dados.dados.usuarios.length === 0 ? <Vazio>Nenhum usuário.</Vazio> : (
         <div className="cartao divide-y divide-border">
           {dados.dados.usuarios.map(u => {
@@ -59,7 +113,7 @@ export function UsuariosPage() {
         <UsuarioModal usuario={editando === 'novo' ? undefined : editando} profissionais={dados.dados.profissionais} usuarios={dados.dados.usuarios} proprio={perfil.usuarioId}
           onFechar={() => setEditando(null)} onSalvo={mensagem => { avisar(mensagem); setEditando(null); dados.recarregar() }} />
       )}
-      {senhaDe && <SenhaModal usuario={senhaDe} onFechar={() => setSenhaDe(null)} onSalvo={() => { avisar('Senha redefinida.'); setSenhaDe(null) }} />}
+      {senhaDe && <SenhaModal usuario={senhaDe} onFechar={() => setSenhaDe(null)} onSalvo={() => senhaRedefinida(senhaDe)} />}
     </div>
   )
 }

@@ -28,7 +28,7 @@ export function ProfissionaisPage() {
 
   return (
     <div>
-      <CabecalhoPagina sobretitulo="Equipe" titulo="Profissionais" descricao="Cadastre a equipe, os serviços habilitados e a jornada de cada profissional."
+      <CabecalhoPagina sobretitulo="Equipe" titulo="Agenda profissionais" descricao="Cadastre a equipe, os serviços habilitados e a jornada de cada profissional."
         acoes={<button type="button" onClick={() => setEditando('novo')} className="botao botao-primario"><Plus size={18} />Novo profissional</button>} />
       {dados.erro ? <FalhaCarregamento mensagem={dados.erro} onTentar={dados.recarregar} /> : !dados.dados ? <Carregando /> : (
         <div className="grid gap-6 lg:grid-cols-[280px_1fr]">

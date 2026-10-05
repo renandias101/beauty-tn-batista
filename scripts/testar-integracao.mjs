@@ -534,8 +534,8 @@ try {
   const existentes = exigir(await admin.from('lista_espera').select('id, versao').eq('cliente_id', cliente3.id).in('status', ['aguardando', 'contatado']), 'entradas antigas')
   for (const e of existentes) await admin.rpc('atualizar_lista_espera', { p_id: e.id, p_status: 'desistiu', p_observacao: 'Limpeza de execução anterior', p_versao: e.versao })
   const idEspera = randomUUID()
-  const espera = await secretaria.rpc('criar_lista_espera', { p_id: idEspera, p_cliente_id: cliente3.id, p_servico_id: serv60.id, p_profissional_id: null, p_data_inicio: hojeClinica(), p_data_fim: somarDiasTexto(D, 30), p_hora_inicio: null, p_hora_fim: null, p_observacao: 'Teste de integração' })
-  const duplicada = await secretaria.rpc('criar_lista_espera', { p_id: randomUUID(), p_cliente_id: cliente3.id, p_servico_id: serv60.id, p_profissional_id: null, p_data_inicio: hojeClinica(), p_data_fim: somarDiasTexto(D, 30), p_hora_inicio: null, p_hora_fim: null, p_observacao: null })
+  const espera = await secretaria.rpc('criar_lista_espera', { p_id: idEspera, p_cliente_id: cliente3.id, p_servico_id: serv60.id, p_profissional_id: null, p_data_inicio: D, p_data_fim: somarDiasTexto(D, 30), p_hora_inicio: null, p_hora_fim: null, p_observacao: 'Teste de integração' })
+  const duplicada = await secretaria.rpc('criar_lista_espera', { p_id: randomUUID(), p_cliente_id: cliente3.id, p_servico_id: serv60.id, p_profissional_id: null, p_data_inicio: D, p_data_fim: somarDiasTexto(D, 30), p_hora_inicio: null, p_hora_fim: null, p_observacao: null })
   verificar('Lista de espera aceita a entrada e recusa duplicidade acidental', !espera.error && /já está na lista/.test(duplicada.error?.message ?? ''), espera.error?.message ?? duplicada.error?.message)
   const vagaLib = await criar(secretaria, { hora: '16:00', data: somarDiasTexto(D, 4), cli: cliente2 })
   const vagaReg = exigir(await admin.from('agendamentos').select('inicio, ocupado_ate').eq('id', vagaLib.id).single(), 'vaga')
@@ -565,7 +565,7 @@ try {
   const grupo = await secretaria.rpc('criar_grupo_agendamentos', { p_grupo_id: g1, p_cliente_id: cliente2.id, p_etapas: etapas([[serv60, profA, '08:00'], [serv60, profB, '09:00']]), p_observacao: null, p_justificativa_conflito: null })
   const reenvio = await secretaria.rpc('criar_grupo_agendamentos', { p_grupo_id: g1, p_cliente_id: cliente2.id, p_etapas: etapas([[serv60, profA, '08:00'], [serv60, profB, '09:00']]), p_observacao: null, p_justificativa_conflito: null })
   verificar('Marcação com dois serviços consecutivos é criada uma única vez (reenvio não duplica)', !grupo.error && !reenvio.error && (await doGrupo(g1)).length === 2, grupo.error?.message)
-  exigir(await admin.rpc('criar_bloqueio', { p_profissional_id: profB, p_data_inicio: D6, p_data_fim: D6, p_hora_inicio: '15:00', p_hora_fim: '16:00', p_motivo: 'Bloqueio (teste de marcação)', p_dia_inteiro: false }), 'bloqueio marcação')
+  exigir(await admin.rpc('criar_bloqueio', { p_profissional_id: profB.id, p_data_inicio: D6, p_data_fim: D6, p_hora_inicio: '15:00', p_hora_fim: '16:00', p_motivo: 'Bloqueio (teste de marcação)', p_dia_inteiro: false }), 'bloqueio marcação')
   const g2 = randomUUID()
   const falhaG2 = await secretaria.rpc('criar_grupo_agendamentos', { p_grupo_id: g2, p_cliente_id: cliente3.id, p_etapas: etapas([[serv60, profA, '14:00'], [serv60, profB, '15:00']]), p_observacao: null, p_justificativa_conflito: null })
   verificar('Falha em uma etapa não cria nenhuma reserva da marcação', /^Etapa 2/.test(falhaG2.error?.message ?? '') && (await doGrupo(g2)).length === 0, falhaG2.error?.message)
@@ -598,6 +598,37 @@ try {
   verificar('Cancelar toda a série cancela as ocorrências futuras', cancSerie.data === 2, cancSerie.error?.message)
   const profSerie = await prof1.rpc('prever_serie', serieArgs)
   verificar('Profissional não cria séries nem marcações', profSerie.error?.code === '42501')
+
+  // ---------- "Esqueci a senha" (migrações 013 e 014) ----------
+  const contaProf2 = usuarios.find(u => u.email === emailDe(env.TESTE_PROF2_USUARIO))?.usuario_id
+  // Encerra como atendido (o descarte imporia 30 minutos de espera e afetaria execuções seguidas).
+  await admin.rpc('encerrar_pedido_senha', { p_usuario_id: contaProf2, p_resolucao: 'senha_redefinida' })
+  const pedidoReal = await anonimo.rpc('solicitar_redefinicao_senha', { p_usuario: ` ${env.TESTE_PROF2_USUARIO.toUpperCase()} ` })
+  const pedidoRepetido = await anonimo.rpc('solicitar_redefinicao_senha', { p_usuario: env.TESTE_PROF2_USUARIO })
+  const pedidoInexistente = await anonimo.rpc('solicitar_redefinicao_senha', { p_usuario: `nao.existe.${randomUUID().slice(0, 8)}` })
+  verificar('Visitante pede nova senha; a resposta é igual para conta existente ou não', !pedidoReal.error && !pedidoRepetido.error && !pedidoInexistente.error && pedidoReal.data === pedidoInexistente.data,
+    pedidoReal.error?.message ?? pedidoInexistente.error?.message)
+  const pedidos = exigir(await admin.rpc('listar_pedidos_senha'), 'pedidos de senha')
+  verificar('Pedido repetido gera um único aviso para a administração', pedidos.filter(p => p.usuario_id === contaProf2).length === 1)
+  verificar('Usuário inexistente não gera aviso', pedidos.every(p => !p.email.startsWith('nao.existe.')))
+  const [secPedidos, anonPedidos, secEncerrar, anonTabela] = await Promise.all([
+    secretaria.rpc('listar_pedidos_senha'), anonimo.rpc('listar_pedidos_senha'),
+    secretaria.rpc('encerrar_pedido_senha', { p_usuario_id: contaProf2, p_resolucao: 'descartado' }),
+    anonimo.from('pedidos_redefinicao_senha').select('id'),
+  ])
+  verificar('Somente a administração vê e encerra pedidos de senha', secPedidos.error?.code === '42501' && Boolean(anonPedidos.error) && secEncerrar.error?.code === '42501' && Boolean(anonTabela.error))
+  const resolucaoInvalida = await admin.rpc('encerrar_pedido_senha', { p_usuario_id: contaProf2, p_resolucao: 'qualquer' })
+  verificar('Resolução inválida é recusada', resolucaoInvalida.error?.code === 'P0001')
+  exigir(await admin.rpc('encerrar_pedido_senha', { p_usuario_id: contaProf2, p_resolucao: 'senha_redefinida' }), 'encerrar pedido')
+  const depoisDeEncerrar = exigir(await admin.rpc('listar_pedidos_senha'), 'pedidos de senha')
+  verificar('Pedido atendido sai da lista da administração', !depoisDeEncerrar.some(p => p.usuario_id === contaProf2))
+  // Outra conta: pede, a administração descarta e um novo pedido logo em seguida não gera aviso (espera de 30 minutos).
+  const contaProf1Senha = usuarios.find(u => u.email === emailDe(env.TESTE_PROF1_USUARIO))?.usuario_id
+  await anonimo.rpc('solicitar_redefinicao_senha', { p_usuario: env.TESTE_PROF1_USUARIO })
+  exigir(await admin.rpc('encerrar_pedido_senha', { p_usuario_id: contaProf1Senha, p_resolucao: 'descartado' }), 'descartar pedido')
+  const aposDescarte = await anonimo.rpc('solicitar_redefinicao_senha', { p_usuario: env.TESTE_PROF1_USUARIO })
+  const pedidosAposDescarte = exigir(await admin.rpc('listar_pedidos_senha'), 'pedidos após descarte')
+  verificar('Após um descarte, novo pedido da mesma conta não gera aviso por 30 minutos', !aposDescarte.error && !pedidosAposDescarte.some(p => p.usuario_id === contaProf1Senha), aposDescarte.error?.message)
 } finally {
   // ---------- Limpeza ----------
   const diasTeste = [0, 1, 2, 3, 4, 5, 6, 7, 14, 21].map(n => somarDiasTexto(D, n))

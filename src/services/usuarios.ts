@@ -4,7 +4,7 @@ import { ErroDeOperacao } from '../lib/erros'
 import * as demo from '../demo/servicos'
 import { modoDemo } from '../lib/modoDemo'
 import { supabase } from '../lib/supabase'
-import type { Papel, Usuario } from '../types'
+import type { Papel, PedidoSenha, Usuario } from '../types'
 
 export async function listarUsuarios(): Promise<Usuario[]> {
   if (modoDemo) return demo.listarUsuarios()
@@ -32,3 +32,32 @@ export const atualizarUsuario = (u: { usuarioId: string; nome: string; papel: Pa
   modoDemo ? demo.atualizarUsuario(u) : chamar({ acao: 'atualizar', usuario_id: u.usuarioId, nome: u.nome, papel: u.papel, ativo: u.ativo, profissional_id: u.profissionalId })
 
 export const redefinirSenha = (usuarioId: string, senha: string) => modoDemo ? demo.redefinirSenha(usuarioId, senha) : chamar({ acao: 'redefinir_senha', usuario_id: usuarioId, senha })
+
+// ---------- "Esqueci a senha": pedido sem login, atendido pela administração ----------
+
+/** A resposta é sempre igual, exista a conta ou não (o servidor não revela quais usuários existem). */
+export async function solicitarRedefinicaoSenha(usuario: string) {
+  if (modoDemo) return demo.solicitarRedefinicaoSenha(usuario)
+  const { error } = await supabase.rpc('solicitar_redefinicao_senha', { p_usuario: usuario })
+  if (error) throw error
+}
+
+export async function listarPedidosSenha(): Promise<PedidoSenha[]> {
+  if (modoDemo) return demo.listarPedidosSenha()
+  const { data, error } = await supabase.rpc('listar_pedidos_senha')
+  if (error) throw error
+  return (data as { usuario_id: string; nome: string; email: string; ativo: boolean; solicitado_em: string }[])
+    .map(p => ({ usuarioId: p.usuario_id, nome: p.nome, usuario: usuarioDoEmail(p.email), ativo: p.ativo, solicitadoEm: p.solicitado_em }))
+}
+
+/** Avisa o menu para atualizar o contador de pedidos depois que a administração atende um. */
+export const EVENTO_PEDIDOS_SENHA = 'beauty-tn-batista:pedidos-senha'
+
+export async function encerrarPedidoSenha(usuarioId: string, resolucao: 'senha_redefinida' | 'descartado') {
+  if (modoDemo) await demo.encerrarPedidoSenha(usuarioId, resolucao)
+  else {
+    const { error } = await supabase.rpc('encerrar_pedido_senha', { p_usuario_id: usuarioId, p_resolucao: resolucao })
+    if (error) throw error
+  }
+  window.dispatchEvent(new Event(EVENTO_PEDIDOS_SENHA))
+}

@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Loader2, Plus } from 'lucide-react'
+import { ArrowLeft, Loader2, Plus } from 'lucide-react'
 import { usePerfil } from '../auth/Sessao'
 import { useAvisos } from '../components/Avisos'
 import { CabecalhoPagina, Carregando, FalhaCarregamento, Vazio } from '../components/Basicos'
@@ -30,7 +30,10 @@ export function RecursosPage() {
   return (
     <div>
       <CabecalhoPagina sobretitulo="Cadastro" titulo="Recursos" descricao="Salas e equipamentos compartilhados. Opcional: use apenas para serviços que disputam o mesmo espaço ou equipamento."
-        acoes={<button type="button" onClick={() => setEditando('novo')} className="botao botao-primario"><Plus size={18} />Novo recurso</button>} />
+        acoes={<>
+          <a href="#/servicos" className="botao botao-texto"><ArrowLeft size={18} />Serviços</a>
+          <button type="button" onClick={() => setEditando('novo')} className="botao botao-primario"><Plus size={18} />Novo recurso</button>
+        </>} />
       {dados.erro ? <FalhaCarregamento mensagem={dados.erro} onTentar={dados.recarregar} /> : !dados.dados ? <Carregando /> : !dados.dados.recursos.length ? (
         <Vazio>Nenhum recurso cadastrado. Enquanto não houver recursos, os agendamentos consideram somente a agenda dos profissionais.</Vazio>
       ) : (
